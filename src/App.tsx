@@ -36,7 +36,8 @@ import {
   Tv,
   Smartphone,
   Gift,
-  MoreHorizontal
+  MoreHorizontal,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { INITIAL_DATA } from './data/initialData';
@@ -83,6 +84,10 @@ export default function App() {
   const [data, setData] = useState(INITIAL_DATA);
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
+  const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
+  const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
+  const [isImpactModalOpen, setIsImpactModalOpen] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
@@ -133,22 +138,37 @@ export default function App() {
               ...c, 
               limit: Number(c.limit_value), 
               used: Number(c.used),
-              closingDay: c.closing_day
+              dueDate: c.due_date,
+              closingDay: c.closing_day,
+              logoUrl: c.logo_url
             })) || [],
             invoices: invoices?.map(inv => ({
               ...inv,
               totalAmount: Number(inv.total_amount),
               userShare: Number(inv.user_share),
-              thirdPartyShare: Number(inv.third_party_share)
+              thirdPartyShare: Number(inv.third_party_share),
+              referenceMonth: inv.reference_month,
+              referenceYear: inv.reference_year,
+              isCurrentMonth: inv.is_current_month,
+              cardId: inv.card_id,
+              thirdPartyName: inv.third_party_name
             })) || [],
             cardExpenses: cardExpenses?.map(exp => ({
               ...exp,
-              amount: Number(exp.amount)
+              amount: Number(exp.amount),
+              expenseDate: exp.expense_date,
+              merchantName: exp.merchant_name,
+              currentInstallment: exp.current_installment,
+              ownerType: exp.owner_type,
+              ownerName: exp.owner_name,
+              cardId: exp.card_id,
+              invoiceId: exp.invoice_id
             })) || [],
             debts: debts?.map(d => ({ 
               ...d, 
               totalValue: Number(d.total_value), 
               remainingValue: Number(d.remaining_value),
+              dueDate: d.due_date,
               installments: d.installments_total ? {
                 total: d.installments_total,
                 paid: d.installments_paid,
@@ -272,6 +292,81 @@ export default function App() {
     }
   };
 
+  const handleSaveAccount = async (account: any) => {
+    setData(prev => ({
+      ...prev,
+      accounts: [...prev.accounts, account]
+    }));
+
+    try {
+      await supabase.from('accounts').insert([{
+        name: account.name,
+        bank: account.bank,
+        balance: account.balance,
+        type: account.type,
+        logo_url: account.logoUrl
+      }]);
+    } catch (error) {
+      console.error('Error syncing account with Supabase:', error);
+    }
+  };
+
+  const handleSaveDebt = async (debt: any) => {
+    setData(prev => ({
+      ...prev,
+      debts: [...prev.debts, debt]
+    }));
+
+    try {
+      await supabase.from('debts').insert([{
+        name: debt.name,
+        total_value: debt.totalValue,
+        remaining_value: debt.remainingValue,
+        due_date: debt.dueDate,
+        priority: debt.priority,
+        category: debt.category,
+        type: debt.type,
+        status: debt.status,
+        installments_total: debt.installments?.total,
+        installments_paid: debt.installments?.paid,
+        installments_value: debt.installments?.value
+      }]);
+    } catch (error) {
+      console.error('Error syncing debt with Supabase:', error);
+    }
+  };
+
+  const handleSaveGoal = async (goal: any) => {
+    setData(prev => ({
+      ...prev,
+      goals: [...prev.goals, goal]
+    }));
+
+    try {
+      await supabase.from('goals').insert([{
+        name: goal.name,
+        target_value: goal.targetValue,
+        current_value: goal.currentValue,
+        deadline: goal.deadline
+      }]);
+    } catch (error) {
+      console.error('Error syncing goal with Supabase:', error);
+    }
+  };
+
+  const handleDeleteGoal = async (id: string) => {
+    setData(prev => ({
+      ...prev,
+      goals: prev.goals.filter(g => g.id !== id)
+    }));
+
+    try {
+      await supabase.from('goals').delete().eq('id', id);
+    } catch (error) {
+      console.error('Error deleting goal from Supabase:', error);
+    }
+  };
+
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'map', label: 'Mapa Financeiro', icon: PieChart },
@@ -320,14 +415,21 @@ export default function App() {
               setSelectedAccountId(accountId);
               setIsTransferModalOpen(true);
             }}
+            onAdd={() => setIsAccountModalOpen(true)}
           />
         );
       case 'debts':
-        return <DebtsView data={data} />;
+        return (
+          <DebtsView 
+            data={data} 
+            onAdd={() => setIsDebtModalOpen(true)} 
+            onSimulate={() => setIsImpactModalOpen(true)}
+          />
+        );
       case 'cards':
         return <CardsView data={data} onViewTransactions={(filter) => navigateToTransactions(filter)} onCardClick={handleCardClick} />;
       case 'goals':
-        return <GoalsView data={data} />;
+        return <GoalsView data={data} onAdd={() => setIsGoalModalOpen(true)} onDelete={handleDeleteGoal} />;
       case 'card-details':
         return (
           <CardDetailsView 
@@ -492,6 +594,30 @@ export default function App() {
         isOpen={isTransactionModalOpen}
         onClose={() => setIsTransactionModalOpen(false)}
         onSave={handleSaveTransaction}
+      />
+
+      <AccountModal 
+        isOpen={isAccountModalOpen} 
+        onClose={() => setIsAccountModalOpen(false)} 
+        onSave={handleSaveAccount} 
+      />
+
+      <DebtModal 
+        isOpen={isDebtModalOpen} 
+        onClose={() => setIsDebtModalOpen(false)} 
+        onSave={handleSaveDebt} 
+      />
+
+      <GoalModal 
+        isOpen={isGoalModalOpen} 
+        onClose={() => setIsGoalModalOpen(false)} 
+        onSave={handleSaveGoal} 
+      />
+
+      <ImpactSimulationModal 
+        isOpen={isImpactModalOpen} 
+        onClose={() => setIsImpactModalOpen(false)} 
+        data={data} 
       />
     </div>
   );
@@ -677,7 +803,7 @@ function Dashboard({ totals, data }: { totals: any, data: any }) {
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-bold text-red-400">{formatCurrency(debt.remainingValue)}</p>
-                  <p className="text-[10px] text-brand-text-muted">Vencimento: Dia {debt.dueDate.toString().padStart(2, '0')}</p>
+                  <p className="text-[10px] text-brand-text-muted">Vencimento: Dia {String(debt.dueDate || '').padStart(2, '0')}</p>
                 </div>
               </div>
             ))}
@@ -703,7 +829,7 @@ function Dashboard({ totals, data }: { totals: any, data: any }) {
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-bold">{formatCurrency(debt.installments?.value || debt.remainingValue)}</p>
-                  <p className="text-[10px] text-brand-text-muted">Vence dia {debt.dueDate.toString().padStart(2, '0')}</p>
+                  <p className="text-[10px] text-brand-text-muted">Vence dia {String(debt.dueDate || '').padStart(2, '0')}</p>
                 </div>
               </div>
             ))}
@@ -729,7 +855,7 @@ function StatCard({ title, value, icon: Icon, color }: { title: string, value: n
   );
 }
 
-function DebtsView({ data }: { data: any }) {
+function DebtsView({ data, onAdd, onSimulate }: { data: any, onAdd: () => void, onSimulate: () => void }) {
   const categories = [
     { id: 'PERSONAL', label: 'Dívida Pessoal', color: 'bg-red-500' },
     { id: 'CARD', label: 'Cartão de Crédito', color: 'bg-orange-500' },
@@ -746,7 +872,10 @@ function DebtsView({ data }: { data: any }) {
           <h2 className="text-2xl font-bold">Dívidas e Obrigações</h2>
           <p className="text-brand-text-muted">Controle total de passivos e priorização</p>
         </div>
-        <button className="px-6 py-3 bg-brand-accent rounded-2xl font-bold text-sm hover:bg-brand-accent/90 transition-all">
+        <button 
+          onClick={onAdd}
+          className="px-6 py-3 bg-brand-accent rounded-2xl font-bold text-sm hover:bg-brand-accent/90 transition-all"
+        >
           Nova Dívida
         </button>
       </div>
@@ -788,7 +917,7 @@ function DebtsView({ data }: { data: any }) {
                               Prioridade {debt.priority}
                             </span>
                             <span className="text-[10px] text-brand-text-muted uppercase font-bold">
-                              {debt.type} • Vence dia {debt.dueDate.toString().padStart(2, '0')}
+                              {debt.type} • Vence dia {String(debt.dueDate || '').padStart(2, '0')}
                             </span>
                           </div>
                         </div>
@@ -839,7 +968,10 @@ function DebtsView({ data }: { data: any }) {
             <p className="text-xs text-white/80 mb-6 leading-relaxed">
               Com base no seu fluxo atual, sugerimos focar R$ 500,00 extras este mês nas dívidas pessoais.
             </p>
-            <button className="w-full py-3 bg-white text-brand-accent rounded-xl font-bold text-sm hover:bg-white/90 transition-all">
+            <button 
+              onClick={onSimulate}
+              className="w-full py-3 bg-white text-brand-accent rounded-xl font-bold text-sm hover:bg-white/90 transition-all"
+            >
               Simular Impacto
             </button>
           </div>
@@ -917,7 +1049,7 @@ function CardsView({ data, onViewTransactions, onCardClick }: { data: any, onVie
             <div className="p-6 border-t border-white/5 bg-white/[0.02] flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <CalendarDays size={16} className="text-brand-text-muted" />
-                <span className="text-sm text-brand-text-muted">Vencimento: Dia {card.dueDate.toString().padStart(2, '0')}</span>
+                <span className="text-sm text-brand-text-muted">Vencimento: Dia {String(card.dueDate || '').padStart(2, '0')}</span>
               </div>
               <button 
                 onClick={(e) => {
@@ -1066,7 +1198,7 @@ function CardDetailsView({ cardId, data, onBack }: { cardId: string, data: any, 
         </div>
         <div className="bg-brand-card rounded-3xl p-6 border border-white/5">
           <p className="text-xs text-brand-text-muted mb-1">Dia do Vencimento</p>
-          <p className="text-2xl font-bold">{card.dueDate.toString().padStart(2, '0')}</p>
+          <p className="text-2xl font-bold">{String(card.dueDate || '').padStart(2, '0')}</p>
         </div>
       </div>
 
@@ -1446,7 +1578,7 @@ function EntityView({ type, data, onViewTransactions, onNavigate, onCardClick }:
                     <BankLogo url={card.logoUrl} name={card.bank} className="w-10 h-10" />
                     <div>
                       <p className="text-sm font-bold group-hover:text-brand-accent transition-colors">{card.name}</p>
-                      <p className="text-[10px] text-brand-text-muted uppercase font-bold tracking-wider">Vence dia {card.dueDate.toString().padStart(2, '0')}</p>
+                      <p className="text-[10px] text-brand-text-muted uppercase font-bold tracking-wider">Vence dia {String(card.dueDate || '').padStart(2, '0')}</p>
                     </div>
                   </div>
                   <CreditCardIcon size={18} className="text-brand-text-muted group-hover:text-brand-accent transition-colors" />
@@ -1525,7 +1657,7 @@ function EntityView({ type, data, onViewTransactions, onNavigate, onCardClick }:
                   </div>
                   <div>
                     <p className="text-sm font-bold">{debt.name}</p>
-                    <p className="text-[10px] text-brand-text-muted uppercase font-bold tracking-wider">Vence dia {debt.dueDate.toString().padStart(2, '0')}</p>
+                    <p className="text-[10px] text-brand-text-muted uppercase font-bold tracking-wider">Vence dia {String(debt.dueDate || '').padStart(2, '0')}</p>
                   </div>
                 </div>
                 <p className={cn("text-sm font-bold", debt.status === 'OVERDUE' ? "text-red-400" : "")}>
@@ -1545,7 +1677,7 @@ function EntityView({ type, data, onViewTransactions, onNavigate, onCardClick }:
   );
 }
 
-function AccountsView({ data, onViewTransactions, onTransfer }: { data: any, onViewTransactions: () => void, onTransfer: (id: string) => void }) {
+function AccountsView({ data, onViewTransactions, onTransfer, onAdd }: { data: any, onViewTransactions: () => void, onTransfer: (id: string) => void, onAdd: () => void }) {
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
@@ -1553,7 +1685,10 @@ function AccountsView({ data, onViewTransactions, onTransfer }: { data: any, onV
           <h2 className="text-2xl font-bold">Contas Bancárias</h2>
           <p className="text-brand-text-muted">Gestão centralizada de todas as suas contas</p>
         </div>
-        <button className="px-6 py-3 bg-brand-accent rounded-2xl font-bold text-sm hover:bg-brand-accent/90 transition-all">
+        <button 
+          onClick={onAdd}
+          className="px-6 py-3 bg-brand-accent rounded-2xl font-bold text-sm hover:bg-brand-accent/90 transition-all"
+        >
           Adicionar Conta
         </button>
       </div>
@@ -1600,7 +1735,7 @@ function AccountsView({ data, onViewTransactions, onTransfer }: { data: any, onV
   );
 }
 
-function GoalsView({ data }: { data: any }) {
+function GoalsView({ data, onAdd, onDelete }: { data: any, onAdd: () => void, onDelete: (id: string) => void }) {
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
@@ -1608,14 +1743,24 @@ function GoalsView({ data }: { data: any }) {
           <h2 className="text-2xl font-bold">Metas e Objetivos</h2>
           <p className="text-brand-text-muted">Planejamento de longo prazo e conquistas</p>
         </div>
-        <button className="px-6 py-3 bg-brand-accent rounded-2xl font-bold text-sm hover:bg-brand-accent/90 transition-all">
+        <button 
+          onClick={onAdd}
+          className="px-6 py-3 bg-brand-accent rounded-2xl font-bold text-sm hover:bg-brand-accent/90 transition-all"
+        >
           Nova Meta
         </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         {data.goals.map((goal: any) => (
-          <div key={goal.id} className="bg-brand-card rounded-3xl p-8 border border-white/5">
+          <div key={goal.id} className="bg-brand-card rounded-3xl p-8 border border-white/5 relative group">
+            <button 
+              onClick={() => onDelete(goal.id)}
+              className="absolute top-6 right-6 p-2 bg-red-500/10 text-red-500 rounded-xl opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500 hover:text-white"
+              title="Excluir Meta"
+            >
+              <Trash2 size={18} />
+            </button>
             <div className="flex justify-between items-start mb-8">
               <div className="flex items-center gap-4">
                 <div className="w-14 h-14 rounded-2xl bg-brand-accent/10 flex items-center justify-center text-brand-accent">
@@ -1980,6 +2125,407 @@ function FlowItem({ label, percentage, color }: { label: string, percentage: num
           className={cn("h-full rounded-full", color)}
         />
       </div>
+    </div>
+  );
+}
+
+function AccountModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClose: () => void, onSave: (account: any) => void }) {
+  const [name, setName] = useState('');
+  const [bank, setBank] = useState('');
+  const [balance, setBalance] = useState('');
+  const [type, setType] = useState<'PF' | 'PJ'>('PF');
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-brand-bg/80 backdrop-blur-sm"
+      />
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="relative bg-brand-card w-full max-w-md rounded-3xl border border-white/10 shadow-2xl overflow-hidden"
+      >
+        <div className="p-8 border-b border-white/5 flex items-center justify-between">
+          <h3 className="text-xl font-bold">Adicionar Nova Conta</h3>
+          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-8 space-y-6">
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Nome da Conta</label>
+            <input 
+              type="text" 
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ex: Inter Principal"
+              className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Banco</label>
+            <input 
+              type="text" 
+              value={bank}
+              onChange={(e) => setBank(e.target.value)}
+              placeholder="Ex: Inter"
+              className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Saldo Inicial</label>
+              <input 
+                type="number" 
+                value={balance}
+                onChange={(e) => setBalance(e.target.value)}
+                placeholder="0.00"
+                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Tipo</label>
+              <select 
+                value={type}
+                onChange={(e) => setType(e.target.value as 'PF' | 'PJ')}
+                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all appearance-none"
+              >
+                <option value="PF">Pessoa Física (PF)</option>
+                <option value="PJ">Pessoa Jurídica (PJ)</option>
+              </select>
+            </div>
+          </div>
+
+          <button 
+            onClick={() => {
+              if (name && bank && balance) {
+                onSave({
+                  id: Math.random().toString(36).substr(2, 9),
+                  name,
+                  bank,
+                  balance: parseFloat(balance),
+                  type,
+                  logoUrl: `https://logo.clearbit.com/${bank.toLowerCase().replace(/\s/g, '')}.com.br`
+                });
+                onClose();
+              }
+            }}
+            className="w-full py-4 bg-brand-accent rounded-2xl font-bold text-sm hover:bg-brand-accent/90 transition-all shadow-lg shadow-brand-accent/20"
+          >
+            Salvar Conta
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function DebtModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClose: () => void, onSave: (debt: any) => void }) {
+  const [name, setName] = useState('');
+  const [totalValue, setTotalValue] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [priority, setPriority] = useState<'MAX' | 'HIGH' | 'MEDIUM' | 'LOW'>('MEDIUM');
+  const [category, setCategory] = useState('PERSONAL');
+  const [type, setType] = useState<'PF' | 'PJ'>('PF');
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-brand-bg/80 backdrop-blur-sm"
+      />
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="relative bg-brand-card w-full max-w-md rounded-3xl border border-white/10 shadow-2xl overflow-hidden"
+      >
+        <div className="p-8 border-b border-white/5 flex items-center justify-between">
+          <h3 className="text-xl font-bold">Nova Dívida ou Obrigação</h3>
+          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-8 space-y-6">
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Descrição</label>
+            <input 
+              type="text" 
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ex: Empréstimo Bancário"
+              className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Valor Total</label>
+              <input 
+                type="number" 
+                value={totalValue}
+                onChange={(e) => setTotalValue(e.target.value)}
+                placeholder="0.00"
+                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Dia Vencimento</label>
+              <input 
+                type="number" 
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                placeholder="10"
+                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Prioridade</label>
+              <select 
+                value={priority}
+                onChange={(e) => setPriority(e.target.value as any)}
+                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all appearance-none"
+              >
+                <option value="MAX">Máxima</option>
+                <option value="HIGH">Alta</option>
+                <option value="MEDIUM">Média</option>
+                <option value="LOW">Baixa</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Tipo</label>
+              <select 
+                value={type}
+                onChange={(e) => setType(e.target.value as 'PF' | 'PJ')}
+                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all appearance-none"
+              >
+                <option value="PF">Pessoa Física (PF)</option>
+                <option value="PJ">Pessoa Jurídica (PJ)</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Categoria</label>
+            <select 
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all appearance-none"
+            >
+              <option value="PERSONAL">Dívida Pessoal</option>
+              <option value="CARD">Cartão de Crédito</option>
+              <option value="LOAN">Empréstimos</option>
+              <option value="SERASA">Serasa</option>
+              <option value="EDUCATION">Faculdade</option>
+              <option value="FIXED_COST">Contas Fixas</option>
+            </select>
+          </div>
+
+          <button 
+            onClick={() => {
+              if (name && totalValue && dueDate) {
+                onSave({
+                  id: Math.random().toString(36).substr(2, 9),
+                  name,
+                  totalValue: parseFloat(totalValue),
+                  remainingValue: parseFloat(totalValue),
+                  dueDate: parseInt(dueDate),
+                  priority,
+                  category,
+                  type,
+                  status: 'PENDING'
+                });
+                onClose();
+              }
+            }}
+            className="w-full py-4 bg-brand-accent rounded-2xl font-bold text-sm hover:bg-brand-accent/90 transition-all shadow-lg shadow-brand-accent/20"
+          >
+            Salvar Dívida
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function GoalModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClose: () => void, onSave: (goal: any) => void }) {
+  const [name, setName] = useState('');
+  const [targetValue, setTargetValue] = useState('');
+  const [currentValue, setCurrentValue] = useState('');
+  const [deadline, setDeadline] = useState('');
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-brand-bg/80 backdrop-blur-sm"
+      />
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="relative bg-brand-card w-full max-w-md rounded-3xl border border-white/10 shadow-2xl overflow-hidden"
+      >
+        <div className="p-8 border-b border-white/5 flex items-center justify-between">
+          <h3 className="text-xl font-bold">Nova Meta ou Objetivo</h3>
+          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-8 space-y-6">
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Nome da Meta</label>
+            <input 
+              type="text" 
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ex: Reserva de Emergência"
+              className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Valor Alvo</label>
+              <input 
+                type="number" 
+                value={targetValue}
+                onChange={(e) => setTargetValue(e.target.value)}
+                placeholder="0.00"
+                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Valor Atual</label>
+              <input 
+                type="number" 
+                value={currentValue}
+                onChange={(e) => setCurrentValue(e.target.value)}
+                placeholder="0.00"
+                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Prazo (Opcional)</label>
+            <input 
+              type="date" 
+              value={deadline}
+              onChange={(e) => setDeadline(e.target.value)}
+              className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all"
+            />
+          </div>
+
+          <button 
+            onClick={() => {
+              if (name && targetValue) {
+                onSave({
+                  id: Math.random().toString(36).substr(2, 9),
+                  name,
+                  targetValue: parseFloat(targetValue),
+                  currentValue: parseFloat(currentValue || '0'),
+                  deadline
+                });
+                onClose();
+              }
+            }}
+            className="w-full py-4 bg-brand-accent rounded-2xl font-bold text-sm hover:bg-brand-accent/90 transition-all shadow-lg shadow-brand-accent/20"
+          >
+            Salvar Meta
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function ImpactSimulationModal({ isOpen, onClose, data }: { isOpen: boolean, onClose: () => void, data: any }) {
+  const [extraAmount, setExtraAmount] = useState('500');
+  
+  if (!isOpen) return null;
+
+  const totalDebt = data.debts.reduce((acc: number, d: any) => acc + d.remainingValue, 0);
+  const monthsToPay = Math.ceil(totalDebt / (parseFloat(extraAmount) || 1));
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-brand-bg/80 backdrop-blur-sm"
+      />
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="relative bg-brand-card w-full max-w-md rounded-3xl border border-white/10 shadow-2xl overflow-hidden"
+      >
+        <div className="p-8 border-b border-white/5 flex items-center justify-between">
+          <h3 className="text-xl font-bold">Simulador de Impacto</h3>
+          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-8 space-y-8">
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Aporte Extra Mensal</label>
+            <div className="relative">
+              <span className="absolute left-6 top-1/2 -translate-y-1/2 font-bold text-brand-text-muted">R$</span>
+              <input 
+                type="number" 
+                value={extraAmount}
+                onChange={(e) => setExtraAmount(e.target.value)}
+                className="w-full pl-14 pr-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-xl font-bold focus:outline-none focus:border-brand-accent transition-all"
+              />
+            </div>
+          </div>
+
+          <div className="bg-white/5 rounded-2xl p-6 space-y-4">
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-brand-text-muted">Total em Dívidas</span>
+              <span className="font-bold">{formatCurrency(totalDebt)}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-brand-text-muted">Tempo para Quitação</span>
+              <span className="font-bold text-brand-accent">{monthsToPay} meses</span>
+            </div>
+            <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+              <div className="h-full bg-brand-accent w-1/3" />
+            </div>
+            <p className="text-[10px] text-brand-text-muted text-center italic">
+              * Estimativa baseada em juros simples e amortização constante.
+            </p>
+          </div>
+
+          <button 
+            onClick={onClose}
+            className="w-full py-4 bg-brand-accent rounded-2xl font-bold text-sm hover:bg-brand-accent/90 transition-all shadow-lg shadow-brand-accent/20"
+          >
+            Entendido
+          </button>
+        </div>
+      </motion.div>
     </div>
   );
 }
