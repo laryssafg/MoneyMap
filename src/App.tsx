@@ -293,21 +293,25 @@ export default function App() {
   };
 
   const handleSaveAccount = async (account: any) => {
+    // Optimistic update
     setData(prev => ({
       ...prev,
       accounts: [...prev.accounts, account]
     }));
 
     try {
-      await supabase.from('accounts').insert([{
+      const { error } = await supabase.from('accounts').insert([{
         name: account.name,
         bank: account.bank,
         balance: account.balance,
         type: account.type,
         logo_url: account.logoUrl
       }]);
+      
+      if (error) throw error;
     } catch (error) {
       console.error('Error syncing account with Supabase:', error);
+      // Revert optimistic update if needed, but for now just log
     }
   };
 
@@ -2206,7 +2210,7 @@ function AccountModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClose: (
 
           <button 
             onClick={() => {
-              if (name && bank && balance) {
+              if (name && bank && balance !== '') {
                 onSave({
                   id: Math.random().toString(36).substr(2, 9),
                   name,
@@ -2215,6 +2219,10 @@ function AccountModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClose: (
                   type,
                   logoUrl: `https://logo.clearbit.com/${bank.toLowerCase().replace(/\s/g, '')}.com.br`
                 });
+                setName('');
+                setBank('');
+                setBalance('');
+                setType('PF');
                 onClose();
               }
             }}
@@ -2338,7 +2346,7 @@ function DebtModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClose: () =
 
           <button 
             onClick={() => {
-              if (name && totalValue && dueDate) {
+              if (name && totalValue !== '' && dueDate !== '') {
                 onSave({
                   id: Math.random().toString(36).substr(2, 9),
                   name,
@@ -2350,6 +2358,12 @@ function DebtModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClose: () =
                   type,
                   status: 'PENDING'
                 });
+                setName('');
+                setTotalValue('');
+                setDueDate('');
+                setPriority('MEDIUM');
+                setCategory('PERSONAL');
+                setType('PF');
                 onClose();
               }
             }}
@@ -2438,7 +2452,7 @@ function GoalModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClose: () =
 
           <button 
             onClick={() => {
-              if (name && targetValue) {
+              if (name && targetValue !== '') {
                 onSave({
                   id: Math.random().toString(36).substr(2, 9),
                   name,
@@ -2446,6 +2460,10 @@ function GoalModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClose: () =
                   currentValue: parseFloat(currentValue || '0'),
                   deadline
                 });
+                setName('');
+                setTargetValue('');
+                setCurrentValue('');
+                setDeadline('');
                 onClose();
               }
             }}
