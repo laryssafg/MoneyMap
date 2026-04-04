@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-bg: #0f142d;
+  --color-brand-accent: #8a2695;
+  --color-brand-card: #1a1f3d;
+  --color-brand-text: #ffffff;
+  --color-brand-text-muted: #9ca3af;
+}
+
+@layer base {
+  body {
+    @apply bg-brand-bg text-brand-text font-sans antialiased;
+  }
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
