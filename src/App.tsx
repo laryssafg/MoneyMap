@@ -192,49 +192,170 @@ export default function App() {
   }, []);
 
   const handleSaveTransaction = async (transaction: any) => {
+    const installments = transaction.installments || 1;
+    const installmentAmount = transaction.amount / installments;
+    
+    const transactionsToSave: any[] = [];
+    
+    if (transaction.category === 'CREDIT_CARD' && transaction.type === 'PF') {
+      const purchaseDate = new Date(transaction.date + 'T12:00:00');
+      const year = purchaseDate.getFullYear();
+      const month = purchaseDate.getMonth();
+      const lastDay = new Date(year, month + 1, 0).getDate();
+      const penultimateDay = lastDay - 1;
+      const day = purchaseDate.getDate();
+      
+      const startMonthOffset = (day <= penultimateDay) ? 1 : 2;
+      
+      for (let i = 0; i < installments; i++) {
+        const dueDate = new Date(year, month + startMonthOffset + i, 7);
+        transactionsToSave.push({
+          ...transaction,
+          id: i === 0 ? transaction.id : Math.random().toString(36).substr(2, 9),
+          description: installments > 1 ? `${transaction.description} (${i + 1}/${installments})` : transaction.description,
+          amount: installmentAmount,
+          date: dueDate.toISOString().split('T')[0],
+        });
+      }
+    } else if (installments > 1) {
+      const purchaseDate = new Date(transaction.date + 'T12:00:00');
+      for (let i = 0; i < installments; i++) {
+        const date = new Date(purchaseDate);
+        date.setMonth(date.getMonth() + i);
+        transactionsToSave.push({
+          ...transaction,
+          id: i === 0 ? transaction.id : Math.random().toString(36).substr(2, 9),
+          description: `${transaction.description} (${i + 1}/${installments})`,
+          amount: installmentAmount,
+          date: date.toISOString().split('T')[0],
+        });
+      }
+    } else {
+      transactionsToSave.push(transaction);
+    }
+
     // Optimistic update
     setData(prev => {
       let newCards = [...prev.cards];
+      let newInvoices = [...prev.invoices];
+      let newCardExpenses = [...prev.cardExpenses];
       
-      // Credit Card Logic for PJ
-      if (transaction.category === 'CREDIT_CARD' && transaction.type === 'PJ') {
-        newCards = prev.cards.map(card => {
-          if (card.type === 'PJ') {
-            const amount = Math.abs(transaction.amount);
-            if (transaction.flowType === 'EXPENSE') {
-              return { ...card, used: card.used + amount };
-            } else {
-              return { ...card, used: Math.max(0, card.used - amount) };
+      if (transaction.category === 'CREDIT_CARD') {
+        const card = prev.cards.find(c => c.type === transaction.type);
+        if (card) {
+          const totalAmount = Math.abs(transaction.amount);
+          newCards = prev.cards.map(c => {
+            if (c.id === card.id) {
+              return { ...c, used: transaction.flowType === 'EXPENSE' ? c.used + totalAmount : Math.max(0, c.used - totalAmount) };
             }
-          }
-          return card;
-        });
+            return c;
+          });
+          
+          transactionsToSave.forEach(t => {
+            const tDate = new Date(t.date + 'T12:00:00');
+            const refMonth = tDate.getMonth() + 1;
+            const refYear = tDate.getFullYear();
+            
+            const invoice = newInvoices.find(inv => 
+              inv.cardId === card.id && 
+              inv.referenceMonth === refMonth && 
+              inv.referenceYear === refYear
+            );
+            
+            if (invoice) {
+              newInvoices = newInvoices.map(inv => inv.id === invoice.id ? {
+                ...inv,
+                totalAmount: inv.totalAmount + Math.abs(t.amount)
+              } : inv);
+              
+              newCardExpenses.push({
+                id: Math.random().toString(36).substr(2, 9),
+                invoiceId: invoice.id,
+                description: t.description,
+                amount: Math.abs(t.amount),
+                expenseDate: transaction.date,
+                category: 'OTHER',
+                ownerType: 'user'
+              });
+            }
+          });
+        }
       }
 
       return {
         ...prev,
         cards: newCards,
-        transactions: [transaction, ...prev.transactions]
+        invoices: newInvoices,
+        cardExpenses: newCardExpenses,
+        transactions: [...transactionsToSave, ...prev.transactions]
       };
     });
 
-    // Sync with Supabase
     try {
-      await supabase.from('transactions').insert([{
-        description: transaction.description,
-        amount: transaction.amount,
-        date: transaction.date,
-        category: transaction.category,
-        type: transaction.type,
-        flow_type: transaction.flowType
-      }]);
+      const { error: tError } = await supabase.from('transactions').insert(transactionsToSave.map(t => ({
+        description: t.description,
+        amount: t.amount,
+        date: t.date,
+        category: t.category,
+        type: t.type,
+        flow_type: t.flowType
+      })));
+      
+      if (tError) throw tError;
 
-      if (transaction.category === 'CREDIT_CARD' && transaction.type === 'PJ') {
-        const pjCard = data.cards.find(c => c.type === 'PJ');
-        if (pjCard) {
-          const amount = Math.abs(transaction.amount);
-          const newUsed = transaction.flowType === 'EXPENSE' ? pjCard.used + amount : Math.max(0, pjCard.used - amount);
-          await supabase.from('cards').update({ used: newUsed }).eq('id', pjCard.id);
+      if (transaction.category === 'CREDIT_CARD') {
+        const card = data.cards.find(c => c.type === transaction.type);
+        if (card) {
+          const totalAmount = Math.abs(transaction.amount);
+          const newUsed = transaction.flowType === 'EXPENSE' ? card.used + totalAmount : Math.max(0, card.used - totalAmount);
+          await supabase.from('cards').update({ used: newUsed }).eq('id', card.id);
+          
+          for (const t of transactionsToSave) {
+            const tDate = new Date(t.date + 'T12:00:00');
+            const refMonth = tDate.getMonth() + 1;
+            const refYear = tDate.getFullYear();
+            
+            const invoice = data.invoices.find(inv => 
+              inv.cardId === card.id && 
+              inv.referenceMonth === refMonth && 
+              inv.referenceYear === refYear
+            );
+            
+            let invoiceId = invoice?.id;
+            
+            if (!invoiceId) {
+              const { data: newInvoice, error: invError } = await supabase.from('card_invoices').insert([{
+                card_id: card.id,
+                reference_month: refMonth,
+                reference_year: refYear,
+                due_date: t.date,
+                total_amount: Math.abs(t.amount),
+                user_share: Math.abs(t.amount),
+                third_party_share: 0,
+                status: 'open',
+                is_current_month: false
+              }]).select().single();
+              
+              if (!invError && newInvoice) {
+                invoiceId = newInvoice.id;
+              }
+            } else {
+              await supabase.from('card_invoices')
+                .update({ total_amount: (invoice?.totalAmount || 0) + Math.abs(t.amount) })
+                .eq('id', invoiceId);
+            }
+            
+            if (invoiceId) {
+              await supabase.from('card_expenses').insert([{
+                invoice_id: invoiceId,
+                description: t.description,
+                amount: Math.abs(t.amount),
+                expense_date: transaction.date,
+                category: 'OTHER',
+                owner_type: 'user'
+              }]);
+            }
+          }
         }
       }
     } catch (error) {
@@ -650,12 +771,36 @@ function BankLogo({ url, name, className }: { url?: string, name: string, classN
 }
 
 function Dashboard({ totals, data }: { totals: any, data: any }) {
-  const chartData = [
-    { name: 'Jan', pf: 0, pj: 0 },
-    { name: 'Fev', pf: 0, pj: 0 },
-    { name: 'Mar', pf: 0, pj: 0 },
-    { name: 'Abr', pf: 0, pj: 0 },
-  ];
+  const chartData = useMemo(() => {
+    const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    const last4Months = [];
+    const now = new Date();
+    
+    for (let i = 3; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      last4Months.push({
+        name: months[d.getMonth()],
+        month: d.getMonth(),
+        year: d.getFullYear(),
+        pf: 0,
+        pj: 0
+      });
+    }
+
+    data.transactions.forEach((t: any) => {
+      const tDate = new Date(t.date + 'T12:00:00');
+      const m = tDate.getMonth();
+      const y = tDate.getFullYear();
+      
+      const monthData = last4Months.find(d => d.month === m && d.year === y);
+      if (monthData) {
+        if (t.type === 'PF') monthData.pf += t.amount;
+        else monthData.pj += t.amount;
+      }
+    });
+
+    return last4Months;
+  }, [data.transactions]);
 
   const pressure = useMemo(() => {
     const monthlyVenc = data.debts.reduce((acc: number, d: any) => acc + (d.installments?.value || d.remainingValue), 0);
@@ -1885,6 +2030,7 @@ function TransactionModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClos
   const [category, setCategory] = useState('OUTROS');
   const [type, setType] = useState<'PF' | 'PJ'>('PF');
   const [flowType, setFlowType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE');
+  const [installments, setInstallments] = useState('1');
 
   if (!isOpen) return null;
 
@@ -1997,6 +2143,24 @@ function TransactionModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClos
             </select>
           </div>
 
+          {category === 'CREDIT_CARD' && (
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-2"
+            >
+              <label className="block text-xs font-bold text-brand-text-muted uppercase mb-2">Parcelas</label>
+              <input 
+                type="number" 
+                min="1"
+                max="48"
+                value={installments}
+                onChange={(e) => setInstallments(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm focus:outline-none focus:border-brand-accent transition-all"
+              />
+            </motion.div>
+          )}
+
           <button 
             onClick={() => {
               if (description && amount) {
@@ -2007,8 +2171,16 @@ function TransactionModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClos
                   date,
                   category,
                   type,
-                  flowType
+                  flowType,
+                  installments: parseInt(installments) || 1
                 });
+                setDescription('');
+                setAmount('');
+                setDate(new Date().toISOString().split('T')[0]);
+                setCategory('OUTROS');
+                setType('PF');
+                setFlowType('EXPENSE');
+                setInstallments('1');
                 onClose();
               }
             }}
