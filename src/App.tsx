@@ -133,7 +133,7 @@ export default function App() {
         if (accounts && accounts.length > 0) {
           setData(prev => ({
             ...prev,
-            accounts: accounts.map(a => ({ ...a, balance: Number(a.balance) })),
+            accounts: accounts.map(a => ({ ...a, balance: Number(a.balance), logoUrl: a.logo_url })),
             cards: cards?.map(c => ({ 
               ...c, 
               limit: Number(c.limit_value), 
@@ -421,15 +421,22 @@ export default function App() {
     }));
 
     try {
-      const { error } = await supabase.from('accounts').insert([{
+      const { data: newAccount, error } = await supabase.from('accounts').insert([{
         name: account.name,
         bank: account.bank,
         balance: account.balance,
         type: account.type,
         logo_url: account.logoUrl
-      }]);
+      }]).select().single();
       
       if (error) throw error;
+
+      if (newAccount) {
+        setData(prev => ({
+          ...prev,
+          accounts: prev.accounts.map(a => a.id === account.id ? { ...a, id: newAccount.id } : a)
+        }));
+      }
     } catch (error) {
       console.error('Error syncing account with Supabase:', error);
       // Revert optimistic update if needed, but for now just log
@@ -443,7 +450,7 @@ export default function App() {
     }));
 
     try {
-      await supabase.from('debts').insert([{
+      const { data: newDebt, error } = await supabase.from('debts').insert([{
         name: debt.name,
         total_value: debt.totalValue,
         remaining_value: debt.remainingValue,
@@ -455,7 +462,16 @@ export default function App() {
         installments_total: debt.installments?.total,
         installments_paid: debt.installments?.paid,
         installments_value: debt.installments?.value
-      }]);
+      }]).select().single();
+      
+      if (error) throw error;
+
+      if (newDebt) {
+        setData(prev => ({
+          ...prev,
+          debts: prev.debts.map(d => d.id === debt.id ? { ...d, id: newDebt.id } : d)
+        }));
+      }
     } catch (error) {
       console.error('Error syncing debt with Supabase:', error);
     }
@@ -468,12 +484,21 @@ export default function App() {
     }));
 
     try {
-      await supabase.from('goals').insert([{
+      const { data: newGoal, error } = await supabase.from('goals').insert([{
         name: goal.name,
         target_value: goal.targetValue,
         current_value: goal.currentValue,
         deadline: goal.deadline
-      }]);
+      }]).select().single();
+      
+      if (error) throw error;
+
+      if (newGoal) {
+        setData(prev => ({
+          ...prev,
+          goals: prev.goals.map(g => g.id === goal.id ? { ...g, id: newGoal.id } : g)
+        }));
+      }
     } catch (error) {
       console.error('Error syncing goal with Supabase:', error);
     }
