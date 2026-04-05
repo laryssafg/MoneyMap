@@ -93,6 +93,7 @@ export default function App() {
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [transactionFilter, setTransactionFilter] = useState('');
+  const [isSupabaseConfigured, setIsSupabaseConfigured] = useState(true);
 
   const navigateToTransactions = (filter: string = '') => {
     setTransactionFilter(filter);
@@ -106,6 +107,13 @@ export default function App() {
 
   // Fetch data from Supabase on mount
   useEffect(() => {
+    const isConfigured = import.meta.env.VITE_SUPABASE_URL && 
+                        import.meta.env.VITE_SUPABASE_URL !== 'your_supabase_url' &&
+                        import.meta.env.VITE_SUPABASE_ANON_KEY &&
+                        import.meta.env.VITE_SUPABASE_ANON_KEY !== 'your_supabase_anon_key';
+    
+    setIsSupabaseConfigured(!!isConfigured);
+
     async function fetchData() {
       try {
         const [
@@ -292,16 +300,30 @@ export default function App() {
     });
 
     try {
-      const { error: tError } = await supabase.from('transactions').insert(transactionsToSave.map(t => ({
+      const { data: savedTransactions, error: tError } = await supabase.from('transactions').insert(transactionsToSave.map(t => ({
         description: t.description,
         amount: t.amount,
         date: t.date,
         category: t.category,
         type: t.type,
         flow_type: t.flowType
-      })));
+      }))).select();
       
       if (tError) throw tError;
+
+      if (savedTransactions) {
+        setData(prev => ({
+          ...prev,
+          transactions: prev.transactions.map(t => {
+            const saved = savedTransactions.find(st => 
+              st.description === t.description && 
+              st.amount === t.amount && 
+              st.date === t.date
+            );
+            return saved ? { ...t, id: saved.id } : t;
+          })
+        }));
+      }
 
       if (transaction.category === 'CREDIT_CARD') {
         const card = data.cards.find(c => c.type === transaction.type);
@@ -625,6 +647,21 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-brand-bg overflow-hidden">
+      {/* Supabase Warning */}
+      {!isSupabaseConfigured && (
+        <div className="fixed top-4 right-4 z-[100] max-w-md bg-red-500/10 border border-red-500/20 backdrop-blur-md p-4 rounded-2xl flex items-start gap-4 shadow-2xl animate-in fade-in slide-in-from-top-4">
+          <div className="p-2 bg-red-500 rounded-xl text-white">
+            <AlertCircle size={20} />
+          </div>
+          <div>
+            <h4 className="font-bold text-red-400 text-sm">Supabase não configurado</h4>
+            <p className="text-xs text-red-400/80 mt-1">
+              Para salvar dados permanentemente, configure as variáveis de ambiente <code className="bg-red-500/20 px-1 rounded">VITE_SUPABASE_URL</code> e <code className="bg-red-500/20 px-1 rounded">VITE_SUPABASE_ANON_KEY</code> no menu Settings.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Sidebar */}
       <motion.aside 
         initial={false}
