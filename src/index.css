@@ -1,16 +1,38 @@
 @import "tailwindcss";
 
 @theme {
-  --color-brand-bg: #0f142d;
-  --color-brand-accent: #8a2695;
-  --color-brand-card: #1a1f3d;
-  --color-brand-text: #ffffff;
-  --color-brand-text-muted: #9ca3af;
+  --color-brand-bg: var(--brand-bg);
+  --color-brand-accent: var(--brand-accent);
+  --color-brand-card: var(--brand-card);
+  --color-brand-text: var(--brand-text);
+  --color-brand-text-muted: var(--brand-text-muted);
+  --color-brand-border: var(--brand-border);
+  --color-brand-hover: var(--brand-hover);
+}
+
+:root {
+  --brand-bg: #f8fafc;
+  --brand-accent: #8a2695;
+  --brand-card: #ffffff;
+  --brand-text: #0f172a;
+  --brand-text-muted: #64748b;
+  --brand-border: rgba(0, 0, 0, 0.05);
+  --brand-hover: rgba(0, 0, 0, 0.03);
+}
+
+.dark {
+  --brand-bg: #0f142d;
+  --brand-accent: #8a2695;
+  --brand-card: #1a1f3d;
+  --brand-text: #ffffff;
+  --brand-text-muted: #9ca3af;
+  --brand-border: rgba(255, 255, 255, 0.05);
+  --brand-hover: rgba(255, 255, 255, 0.03);
 }
 
 @layer base {
   body {
-    @apply bg-brand-bg text-brand-text font-sans antialiased;
+    @apply bg-brand-bg text-brand-text font-sans antialiased transition-colors duration-300;
   }
 }
 

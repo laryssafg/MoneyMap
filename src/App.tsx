@@ -37,7 +37,9 @@ import {
   Smartphone,
   Gift,
   MoreHorizontal,
-  Trash2
+  Trash2,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { INITIAL_DATA } from './data/initialData';
@@ -94,6 +96,23 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [transactionFilter, setTransactionFilter] = useState('');
   const [isSupabaseConfigured, setIsSupabaseConfigured] = useState(true);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('theme');
+    return (saved as 'light' | 'dark') || 'dark';
+  });
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  };
 
   const navigateToTransactions = (filter: string = '') => {
     setTransactionFilter(filter);
@@ -573,7 +592,7 @@ export default function App() {
   const renderContent = () => {
     switch (currentView) {
       case 'dashboard':
-        return <Dashboard totals={totals} data={data} />;
+        return <Dashboard totals={totals} data={data} theme={theme} />;
       case 'pf':
         return <EntityView type="PF" data={data} onViewTransactions={navigateToTransactions} onNavigate={setCurrentView} onCardClick={handleCardClick} />;
       case 'pj':
@@ -633,7 +652,7 @@ export default function App() {
           />
         );
       case 'map':
-        return <FinancialMap data={data} totals={totals} />;
+        return <FinancialMap data={data} totals={totals} theme={theme} />;
       default:
         return (
           <div className="flex flex-col items-center justify-center h-full text-brand-text-muted">
@@ -666,7 +685,7 @@ export default function App() {
       <motion.aside 
         initial={false}
         animate={{ width: isSidebarOpen ? 280 : 80 }}
-        className="bg-brand-card border-r border-white/5 flex flex-col z-20"
+        className="bg-brand-card border-r border-brand-border flex flex-col z-20"
       >
         <div className="p-6 flex items-center justify-between">
           {isSidebarOpen && (
@@ -686,7 +705,7 @@ export default function App() {
           )}
           <button 
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="p-2 hover:bg-white/5 rounded-lg transition-colors text-brand-text-muted"
+            className="p-2 hover:bg-brand-hover rounded-lg transition-colors text-brand-text-muted"
           >
             {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
@@ -704,7 +723,7 @@ export default function App() {
                 "w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 mb-1 group",
                 currentView === item.id 
                   ? "bg-brand-accent text-white shadow-lg shadow-brand-accent/20" 
-                  : "text-brand-text-muted hover:bg-white/5 hover:text-white"
+                  : "text-brand-text-muted hover:bg-brand-hover hover:text-brand-text"
               )}
             >
               <item.icon size={20} className={cn(
@@ -718,9 +737,31 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="p-4 border-t border-white/5">
+        <div className="px-3 py-2 border-t border-brand-border">
+          <button
+            onClick={toggleTheme}
+            className={cn(
+              "w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 group text-brand-text-muted hover:bg-brand-hover hover:text-brand-text",
+              !isSidebarOpen && "justify-center"
+            )}
+            title={theme === 'light' ? 'Modo Escuro' : 'Modo Claro'}
+          >
+            {theme === 'light' ? (
+              <Moon size={20} className="shrink-0 group-hover:text-white" />
+            ) : (
+              <Sun size={20} className="shrink-0 group-hover:text-white" />
+            )}
+            {isSidebarOpen && (
+              <span className="font-medium text-sm truncate">
+                {theme === 'light' ? 'Modo Escuro' : 'Modo Claro'}
+              </span>
+            )}
+          </button>
+        </div>
+
+        <div className="p-4 border-t border-brand-border">
           <div className={cn(
-            "flex items-center gap-3 p-3 rounded-xl bg-white/5",
+            "flex items-center gap-3 p-3 rounded-xl bg-brand-hover",
             !isSidebarOpen && "justify-center"
           )}>
             <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-brand-accent to-purple-400 shrink-0" />
@@ -736,12 +777,12 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-hidden relative">
-        <header className="h-16 border-b border-white/5 flex items-center justify-between px-8 bg-brand-bg/50 backdrop-blur-md sticky top-0 z-10">
+        <header className="h-16 border-b border-brand-border flex items-center justify-between px-8 bg-brand-bg/50 backdrop-blur-md sticky top-0 z-10">
           <h1 className="text-lg font-semibold">
             {menuItems.find(m => m.id === currentView)?.label}
           </h1>
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-full border border-white/10">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-brand-hover rounded-full border border-brand-border">
               <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
               <span className="text-xs font-medium text-brand-text-muted">Sistema Online</span>
             </div>
@@ -832,7 +873,7 @@ function BankLogo({ url, name, className }: { url?: string, name: string, classN
   );
 }
 
-function Dashboard({ totals, data }: { totals: any, data: any }) {
+function Dashboard({ totals, data, theme }: { totals: any, data: any, theme: 'light' | 'dark' }) {
   const chartData = useMemo(() => {
     const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
     const last4Months = [];
@@ -897,7 +938,7 @@ function Dashboard({ totals, data }: { totals: any, data: any }) {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Main Chart */}
-        <div className="lg:col-span-2 bg-brand-card rounded-3xl p-8 border border-white/5">
+        <div className="lg:col-span-2 bg-brand-card rounded-3xl p-8 border border-brand-border">
           <div className="flex items-center justify-between mb-8">
             <div>
               <h3 className="text-lg font-bold">Fluxo de Caixa</h3>
@@ -927,12 +968,17 @@ function Dashboard({ totals, data }: { totals: any, data: any }) {
                     <stop offset="95%" stopColor="#8a2695" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#9ca3af', fontSize: 12}} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{fill: '#9ca3af', fontSize: 12}} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme === 'dark' ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)"} />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: theme === 'dark' ? '#9ca3af' : '#64748b', fontSize: 12}} dy={10} />
+                <YAxis axisLine={false} tickLine={false} tick={{fill: theme === 'dark' ? '#9ca3af' : '#64748b', fontSize: 12}} />
                 <Tooltip 
-                  contentStyle={{ backgroundColor: '#1a1f3d', border: 'none', borderRadius: '12px', color: '#fff' }}
-                  itemStyle={{ color: '#fff' }}
+                  contentStyle={{ 
+                    backgroundColor: theme === 'dark' ? '#1a1f3d' : '#ffffff', 
+                    border: theme === 'dark' ? 'none' : '1px solid rgba(0,0,0,0.05)', 
+                    borderRadius: '12px', 
+                    color: theme === 'dark' ? '#fff' : '#0f172a' 
+                  }}
+                  itemStyle={{ color: theme === 'dark' ? '#fff' : '#0f172a' }}
                 />
                 <Area type="monotone" dataKey="pf" stroke="#60a5fa" fillOpacity={1} fill="url(#colorPf)" strokeWidth={3} />
                 <Area type="monotone" dataKey="pj" stroke="#8a2695" fillOpacity={1} fill="url(#colorPj)" strokeWidth={3} />
@@ -942,7 +988,7 @@ function Dashboard({ totals, data }: { totals: any, data: any }) {
         </div>
 
         {/* Financial Pressure */}
-        <div className="bg-brand-card rounded-3xl p-8 border border-white/5 flex flex-col">
+        <div className="bg-brand-card rounded-3xl p-8 border border-brand-border flex flex-col">
           <h3 className="text-lg font-bold mb-2">Pressão Financeira</h3>
           <p className="text-sm text-brand-text-muted mb-8">Capacidade de pagamento vs Obrigações</p>
           
@@ -956,7 +1002,7 @@ function Dashboard({ totals, data }: { totals: any, data: any }) {
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="12"
-                  className="text-white/5"
+                  className="text-brand-border"
                 />
                 <circle
                   cx="80"
@@ -980,11 +1026,11 @@ function Dashboard({ totals, data }: { totals: any, data: any }) {
             </div>
 
             <div className="w-full space-y-4">
-              <div className="flex justify-between items-center p-3 rounded-xl bg-white/5">
+              <div className="flex justify-between items-center p-3 rounded-xl bg-brand-hover">
                 <span className="text-xs text-brand-text-muted">Vence no mês</span>
                 <span className="text-sm font-bold">{formatCurrency(pressure.monthlyVenc)}</span>
               </div>
-              <div className="flex justify-between items-center p-3 rounded-xl bg-white/5">
+              <div className="flex justify-between items-center p-3 rounded-xl bg-brand-hover">
                 <span className="text-xs text-brand-text-muted">Pode pagar</span>
                 <span className="text-sm font-bold">{formatCurrency(pressure.capacity)}</span>
               </div>
@@ -995,7 +1041,7 @@ function Dashboard({ totals, data }: { totals: any, data: any }) {
 
       {/* Critical Alerts & Upcoming */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <div className="bg-brand-card rounded-3xl p-8 border border-white/5">
+        <div className="bg-brand-card rounded-3xl p-8 border border-brand-border">
           <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
             <AlertCircle className="text-red-400" size={20} />
             Alertas Críticos
@@ -1021,14 +1067,14 @@ function Dashboard({ totals, data }: { totals: any, data: any }) {
           </div>
         </div>
 
-        <div className="bg-brand-card rounded-3xl p-8 border border-white/5">
+        <div className="bg-brand-card rounded-3xl p-8 border border-brand-border">
           <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
             <CalendarDays className="text-blue-400" size={20} />
             Próximos Vencimentos
           </h3>
           <div className="space-y-4">
             {data.debts.filter(d => d.status === 'PENDING').sort((a, b) => Number(a.dueDate) - Number(b.dueDate)).slice(0, 4).map(debt => (
-              <div key={debt.id} className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/5">
+              <div key={debt.id} className="flex items-center justify-between p-4 rounded-2xl bg-brand-hover border border-brand-border">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400">
                     <CalendarDays size={20} />
@@ -1053,9 +1099,9 @@ function Dashboard({ totals, data }: { totals: any, data: any }) {
 
 function StatCard({ title, value, icon: Icon, color }: { title: string, value: number, icon: any, color: string }) {
   return (
-    <div className="bg-brand-card rounded-3xl p-6 border border-white/5 hover:border-white/10 transition-all group">
+    <div className="bg-brand-card rounded-3xl p-6 border border-brand-border hover:border-brand-accent/30 transition-all group">
       <div className="flex items-center justify-between mb-4">
-        <div className={cn("p-3 rounded-2xl bg-white/5 group-hover:scale-110 transition-transform", color)}>
+        <div className={cn("p-3 rounded-2xl bg-brand-hover group-hover:scale-110 transition-transform", color)}>
           <Icon size={24} />
         </div>
         <ChevronRight size={16} className="text-brand-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -1098,8 +1144,8 @@ function DebtsView({ data, onAdd, onSimulate }: { data: any, onAdd: () => void, 
             if (catDebts.length === 0) return null;
 
             return (
-              <div key={cat.id} className="bg-brand-card rounded-3xl border border-white/5 overflow-hidden">
-                <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
+              <div key={cat.id} className="bg-brand-card rounded-3xl border border-brand-border overflow-hidden">
+                <div className="px-6 py-4 border-b border-brand-border flex items-center justify-between bg-brand-hover/50">
                   <div className="flex items-center gap-3">
                     <div className={cn("w-2 h-6 rounded-full", cat.color)} />
                     <h3 className="font-bold">{cat.label}</h3>
@@ -1108,7 +1154,7 @@ function DebtsView({ data, onAdd, onSimulate }: { data: any, onAdd: () => void, 
                     {catDebts.length} itens • {formatCurrency(catDebts.reduce((acc: number, d: any) => acc + d.remainingValue, 0))}
                   </span>
                 </div>
-                <div className="divide-y divide-white/5">
+                <div className="divide-y divide-brand-border">
                   {catDebts.map((debt: any) => (
                     <div key={debt.id} className="p-6 flex items-center justify-between hover:bg-white/[0.01] transition-colors">
                       <div className="flex items-center gap-4">
@@ -1150,7 +1196,7 @@ function DebtsView({ data, onAdd, onSimulate }: { data: any, onAdd: () => void, 
         </div>
 
         <div className="space-y-6">
-          <div className="bg-brand-card rounded-3xl p-6 border border-white/5">
+          <div className="bg-brand-card rounded-3xl p-6 border border-brand-border">
             <h3 className="font-bold mb-4">Prioridade de Pagamento</h3>
             <div className="space-y-4">
               <div className="flex items-start gap-3">
@@ -1207,7 +1253,7 @@ function CardsView({ data, onViewTransactions, onCardClick }: { data: any, onVie
           <div 
             key={card.id} 
             onClick={() => onCardClick(card.id)}
-            className="bg-brand-card rounded-3xl border border-white/5 overflow-hidden cursor-pointer hover:border-brand-accent/30 transition-all group"
+            className="bg-brand-card rounded-3xl border border-brand-border overflow-hidden cursor-pointer hover:border-brand-accent/30 transition-all group"
           >
             <div className="p-8 bg-gradient-to-br from-white/[0.05] to-transparent">
               <div className="flex justify-between items-start mb-12">
@@ -1257,7 +1303,7 @@ function CardsView({ data, onViewTransactions, onCardClick }: { data: any, onVie
               </div>
             </div>
             
-            <div className="p-6 border-t border-white/5 bg-white/[0.02] flex justify-between items-center">
+            <div className="p-6 border-t border-brand-border bg-brand-hover/50 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <CalendarDays size={16} className="text-brand-text-muted" />
                 <span className="text-sm text-brand-text-muted">Vencimento: Dia {String(card.dueDate || '').padStart(2, '0')}</span>
@@ -1650,7 +1696,7 @@ function CardDetailsView({ cardId, data, onBack }: { cardId: string, data: any, 
   );
 }
 
-function FinancialMap({ data, totals }: { data: any, totals: any }) {
+function FinancialMap({ data, totals, theme }: { data: any, totals: any, theme: 'light' | 'dark' }) {
   const pieData = [
     { name: 'Dívidas', value: totals.totalDebts, color: '#ef4444' },
     { name: 'Investimentos', value: totals.totalInvestments, color: '#10b981' },
@@ -1668,7 +1714,7 @@ function FinancialMap({ data, totals }: { data: any, totals: any }) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 flex-1">
-        <div className="bg-brand-card rounded-3xl p-8 border border-white/5 flex flex-col">
+        <div className="bg-brand-card rounded-3xl p-8 border border-brand-border flex flex-col">
           <h3 className="text-lg font-bold mb-8">Distribuição de Patrimônio</h3>
           <div className="flex-1 min-h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
@@ -1687,8 +1733,13 @@ function FinancialMap({ data, totals }: { data: any, totals: any }) {
                   ))}
                 </Pie>
                 <Tooltip 
-                  contentStyle={{ backgroundColor: '#1a1f3d', border: 'none', borderRadius: '12px', color: '#fff' }}
-                  itemStyle={{ color: '#fff' }}
+                  contentStyle={{ 
+                    backgroundColor: theme === 'dark' ? '#1a1f3d' : '#ffffff', 
+                    border: theme === 'dark' ? 'none' : '1px solid rgba(0,0,0,0.05)', 
+                    borderRadius: '12px', 
+                    color: theme === 'dark' ? '#fff' : '#0f172a' 
+                  }}
+                  itemStyle={{ color: theme === 'dark' ? '#fff' : '#0f172a' }}
                   formatter={(value: number) => formatCurrency(value)}
                 />
               </RePieChart>
@@ -1696,7 +1747,7 @@ function FinancialMap({ data, totals }: { data: any, totals: any }) {
           </div>
           <div className="grid grid-cols-2 gap-4 mt-8">
             {pieData.map(item => (
-              <div key={item.name} className="flex items-center gap-3 p-3 rounded-xl bg-white/5">
+              <div key={item.name} className="flex items-center gap-3 p-3 rounded-xl bg-brand-hover">
                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
                 <div>
                   <p className="text-[10px] text-brand-text-muted uppercase font-bold">{item.name}</p>
@@ -2278,7 +2329,7 @@ function TransactionsView({ data, onDelete, onAdd, initialFilter = '' }: { data:
               placeholder="Filtrar lançamentos..."
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              className="pl-12 pr-6 py-3 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all w-64"
+              className="pl-12 pr-6 py-3 bg-brand-hover border border-brand-border rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all w-64"
             />
           </div>
           <button 
@@ -2291,10 +2342,10 @@ function TransactionsView({ data, onDelete, onAdd, initialFilter = '' }: { data:
         </div>
       </div>
 
-      <div className="bg-brand-card rounded-3xl border border-white/5 overflow-hidden">
+      <div className="bg-brand-card rounded-3xl border border-brand-border overflow-hidden">
         <table className="w-full text-left">
           <thead>
-            <tr className="border-b border-white/5 bg-white/[0.02]">
+            <tr className="border-b border-brand-border bg-brand-hover/50">
               <th className="px-6 py-4 text-xs font-bold text-brand-text-muted uppercase">Data</th>
               <th className="px-6 py-4 text-xs font-bold text-brand-text-muted uppercase">Descrição</th>
               <th className="px-6 py-4 text-xs font-bold text-brand-text-muted uppercase">Categoria</th>
@@ -2303,7 +2354,7 @@ function TransactionsView({ data, onDelete, onAdd, initialFilter = '' }: { data:
               <th className="px-6 py-4 text-xs font-bold text-brand-text-muted uppercase text-center">Ações</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/5">
+          <tbody className="divide-y divide-brand-border">
             {transactions.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-6 py-12 text-center text-brand-text-muted">
@@ -2312,11 +2363,11 @@ function TransactionsView({ data, onDelete, onAdd, initialFilter = '' }: { data:
               </tr>
             ) : (
               transactions.map((t: any) => (
-                <tr key={t.id} className="hover:bg-white/[0.01] transition-colors">
+                <tr key={t.id} className="hover:bg-brand-hover transition-colors">
                   <td className="px-6 py-4 text-sm">{t.date}</td>
                   <td className="px-6 py-4 text-sm font-bold">{t.description}</td>
                   <td className="px-6 py-4">
-                    <span className="px-2 py-1 bg-white/5 rounded-md text-[10px] font-bold uppercase">{t.category}</span>
+                    <span className="px-2 py-1 bg-brand-hover rounded-md text-[10px] font-bold uppercase">{t.category}</span>
                   </td>
                   <td className="px-6 py-4">
                     <span className={cn(
