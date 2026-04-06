@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { 
   LayoutDashboard, 
   BarChart3, 
@@ -103,6 +103,102 @@ export default function App() {
     return (saved as 'light' | 'dark') || 'dark';
   });
 
+  const fetchData = useCallback(async () => {
+    if (!isSupabaseConfigured) return;
+    
+    try {
+      const [
+        { data: accounts, error: accError },
+        { data: cards, error: cardError },
+        { data: debts, error: debtError },
+        { data: investments, error: invError },
+        { data: goals, error: goalError },
+        { data: transactions, error: transError },
+        { data: profile, error: profError },
+        { data: invoices, error: invoiceError },
+        { data: cardExpenses, error: expError }
+      ] = await Promise.all([
+        supabase.from('accounts').select('*'),
+        supabase.from('cards').select('*'),
+        supabase.from('debts').select('*'),
+        supabase.from('investments').select('*'),
+        supabase.from('goals').select('*'),
+        supabase.from('transactions').select('*').order('date', { ascending: false }),
+        supabase.from('profile').select('*').single(),
+        supabase.from('card_invoices').select('*').order('due_date', { ascending: true }),
+        supabase.from('card_expenses').select('*').order('expense_date', { ascending: false })
+      ]);
+
+      // Check if we have at least some data or if we should clear initial data
+      // If we are configured, we should prefer DB data even if empty
+      setData(prev => ({
+        ...prev,
+        accounts: accounts?.map(a => ({ 
+          ...a, 
+          balance: Number(a.balance), 
+          logoUrl: a.logo_url,
+          yieldRate: Number(a.yield_rate),
+          lastYieldAt: a.last_yield_at
+        })) || [],
+        cards: cards?.map(c => ({ 
+          ...c, 
+          limit: Number(c.limit_value), 
+          used: Number(c.used),
+          dueDate: c.due_date,
+          closingDay: c.closing_day,
+          logoUrl: c.logo_url
+        })) || [],
+        invoices: invoices?.map(inv => ({
+          ...inv,
+          totalAmount: Number(inv.total_amount),
+          userShare: Number(inv.user_share),
+          thirdPartyShare: Number(inv.third_party_share),
+          referenceMonth: inv.reference_month,
+          referenceYear: inv.reference_year,
+          isCurrentMonth: inv.is_current_month,
+          cardId: inv.card_id,
+          thirdPartyName: inv.third_party_name
+        })) || [],
+        cardExpenses: cardExpenses?.map(exp => ({
+          ...exp,
+          amount: Number(exp.amount),
+          expenseDate: exp.expense_date,
+          merchantName: exp.merchant_name,
+          currentInstallment: exp.current_installment,
+          ownerType: exp.owner_type,
+          ownerName: exp.owner_name,
+          cardId: exp.card_id,
+          invoiceId: exp.invoice_id
+        })) || [],
+        debts: debts?.map(d => ({ 
+          ...d, 
+          totalValue: Number(d.total_value), 
+          remainingValue: Number(d.remaining_value),
+          dueDate: d.due_date,
+          installments: d.installments_total ? {
+            total: d.installments_total,
+            paid: d.installments_paid,
+            value: Number(d.installments_value)
+          } : undefined
+        })) || [],
+        investments: investments?.map(i => ({ ...i, value: Number(i.value) })) || [],
+        goals: goals?.map(g => ({ ...g, targetValue: Number(g.target_value), currentValue: Number(g.current_value) })) || [],
+        transactions: transactions?.map(t => ({ 
+          ...t, 
+          amount: Number(t.amount),
+          accountId: t.account_id,
+          flowType: t.flow_type
+        })) || [],
+        monthlyIncome: profile ? Number(profile.monthly_income) : prev.monthlyIncome
+      }));
+
+    } catch (error) {
+      console.error('Error fetching data from Supabase:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isSupabaseConfigured]);
+
   useEffect(() => {
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
@@ -140,102 +236,8 @@ export default function App() {
       return;
     }
 
-    async function fetchData() {
-      try {
-        const [
-          { data: accounts, error: accError },
-          { data: cards, error: cardError },
-          { data: debts, error: debtError },
-          { data: investments, error: invError },
-          { data: goals, error: goalError },
-          { data: transactions, error: transError },
-          { data: profile, error: profError },
-          { data: invoices, error: invoiceError },
-          { data: cardExpenses, error: expError }
-        ] = await Promise.all([
-          supabase.from('accounts').select('*'),
-          supabase.from('cards').select('*'),
-          supabase.from('debts').select('*'),
-          supabase.from('investments').select('*'),
-          supabase.from('goals').select('*'),
-          supabase.from('transactions').select('*').order('date', { ascending: false }),
-          supabase.from('profile').select('*').single(),
-          supabase.from('card_invoices').select('*').order('due_date', { ascending: true }),
-          supabase.from('card_expenses').select('*').order('expense_date', { ascending: false })
-        ]);
-
-        // Check if we have at least some data or if we should clear initial data
-        // If we are configured, we should prefer DB data even if empty
-        setData(prev => ({
-          ...prev,
-          accounts: accounts?.map(a => ({ 
-            ...a, 
-            balance: Number(a.balance), 
-            logoUrl: a.logo_url,
-            yieldRate: Number(a.yield_rate),
-            lastYieldAt: a.last_yield_at
-          })) || [],
-          cards: cards?.map(c => ({ 
-            ...c, 
-            limit: Number(c.limit_value), 
-            used: Number(c.used),
-            dueDate: c.due_date,
-            closingDay: c.closing_day,
-            logoUrl: c.logo_url
-          })) || [],
-          invoices: invoices?.map(inv => ({
-            ...inv,
-            totalAmount: Number(inv.total_amount),
-            userShare: Number(inv.user_share),
-            thirdPartyShare: Number(inv.third_party_share),
-            referenceMonth: inv.reference_month,
-            referenceYear: inv.reference_year,
-            isCurrentMonth: inv.is_current_month,
-            cardId: inv.card_id,
-            thirdPartyName: inv.third_party_name
-          })) || [],
-          cardExpenses: cardExpenses?.map(exp => ({
-            ...exp,
-            amount: Number(exp.amount),
-            expenseDate: exp.expense_date,
-            merchantName: exp.merchant_name,
-            currentInstallment: exp.current_installment,
-            ownerType: exp.owner_type,
-            ownerName: exp.owner_name,
-            cardId: exp.card_id,
-            invoiceId: exp.invoice_id
-          })) || [],
-          debts: debts?.map(d => ({ 
-            ...d, 
-            totalValue: Number(d.total_value), 
-            remainingValue: Number(d.remaining_value),
-            dueDate: d.due_date,
-            installments: d.installments_total ? {
-              total: d.installments_total,
-              paid: d.installments_paid,
-              value: Number(d.installments_value)
-            } : undefined
-          })) || [],
-          investments: investments?.map(i => ({ ...i, value: Number(i.value) })) || [],
-          goals: goals?.map(g => ({ ...g, targetValue: Number(g.target_value), currentValue: Number(g.current_value) })) || [],
-          transactions: transactions?.map(t => ({ 
-            ...t, 
-            amount: Number(t.amount),
-            accountId: t.account_id,
-            flowType: t.flow_type
-          })) || [],
-          monthlyIncome: profile ? Number(profile.monthly_income) : prev.monthlyIncome
-        }));
-
-      } catch (error) {
-        console.error('Error fetching data from Supabase:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
     fetchData();
-  }, []);
+  }, [fetchData]);
 
   // Yield processing
   useEffect(() => {
