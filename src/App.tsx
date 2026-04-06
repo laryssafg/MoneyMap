@@ -313,23 +313,24 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [isLoading, isSupabaseConfigured, data.accounts.length]);
 
-  // One-time cleanup for the 7 installments of 17.18 and data healing
+  // One-time cleanup and data healing
   useEffect(() => {
-    if (isLoading || !isSupabaseConfigured) return;
+    if (isLoading || !isSupabaseConfigured || data.cards.length === 0) return;
 
     const healCardData = async () => {
-      const targetAmount = 17.18;
-      const card = data.cards.find(c => c.type === 'PF');
-      if (!card) return;
-
       let anyDbChange = false;
+      const pfCard = data.cards.find(c => c.type === 'PF');
+      const pjCard = data.cards.find(c => c.type === 'PJ');
+
+      if (!pfCard) return;
 
       // 1. Remove transactions and expenses of 17.18 if they still exist
+      const targetAmount = 17.18;
       const transactionsToRemove = data.transactions.filter(t => 
         Math.abs(t.amount) === targetAmount && t.category === 'CREDIT_CARD' && t.type === 'PF'
       );
       const cardExpensesToRemove = data.cardExpenses.filter(exp => 
-        exp.amount === targetAmount && exp.cardId === card.id
+        exp.amount === targetAmount && exp.cardId === pfCard.id
       );
 
       if (transactionsToRemove.length > 0) {
@@ -354,54 +355,107 @@ export default function App() {
       });
 
       if (duplicateInvoiceIds.length > 0) {
-        console.log(`Removing ${duplicateInvoiceIds.length} duplicate invoices.`);
         await supabase.from('card_invoices').delete().in('id', duplicateInvoiceIds);
         anyDbChange = true;
       }
 
-      // 3. Recalculate ALL invoice totals for this card
-      const { data: freshExpenses } = await supabase.from('card_expenses').select('*').eq('card_id', card.id);
-      const { data: freshInvoices } = await supabase.from('card_invoices').select('*').eq('card_id', card.id);
+      // 3. Heal missing card expenses from transactions
+      const creditCardTransactions = data.transactions.filter(t => t.category === 'CREDIT_CARD');
+      const currentInvoices = data.invoices.filter(inv => !duplicateInvoiceIds.includes(inv.id));
+      
+      for (const t of creditCardTransactions) {
+        const card = t.type === 'PF' ? pfCard : pjCard;
+        if (!card) continue;
 
-      if (freshInvoices) {
-        let totalCardUsed = 0;
-        let anyInvoiceTotalChanged = false;
+        // Check if this transaction already has a corresponding expense
+        const hasExpense = data.cardExpenses.some(exp => 
+          exp.description === t.description && 
+          exp.amount === Math.abs(t.amount) && 
+          exp.expenseDate === t.date &&
+          exp.cardId === card.id
+        );
 
-        for (const inv of freshInvoices) {
-          const invExpenses = (freshExpenses || []).filter(e => e.invoice_id === inv.id);
-          const newTotal = invExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+        if (!hasExpense) {
+          console.log(`Healing missing card expense for: ${t.description}`);
+          const tDate = new Date(t.date + 'T12:00:00');
+          const refMonth = tDate.getMonth() + 1;
+          const refYear = tDate.getFullYear();
           
-          if (Number(inv.total_amount) !== newTotal) {
-            await supabase.from('card_invoices').update({ total_amount: newTotal }).eq('id', inv.id);
-            anyInvoiceTotalChanged = true;
+          let invoice = currentInvoices.find(inv => 
+            inv.cardId === card.id && 
+            inv.referenceMonth === refMonth && 
+            inv.referenceYear === refYear
+          );
+          
+          let invoiceId = invoice?.id;
+          
+          if (!invoiceId) {
+            const { data: newInvoice, error: invError } = await supabase.from('card_invoices').insert([{
+              card_id: card.id,
+              reference_month: refMonth,
+              reference_year: refYear,
+              due_date: t.date,
+              total_amount: Math.abs(t.amount),
+              user_share: Math.abs(t.amount),
+              status: 'open',
+              is_current_month: false
+            }]).select().single();
+            
+            if (!invError && newInvoice) {
+              invoiceId = newInvoice.id;
+              currentInvoices.push({
+                ...newInvoice,
+                totalAmount: Number(newInvoice.total_amount),
+                cardId: newInvoice.card_id,
+                referenceMonth: newInvoice.reference_month,
+                referenceYear: newInvoice.reference_year
+              });
+            }
+          }
+
+          if (invoiceId) {
+            await supabase.from('card_expenses').insert([{
+              card_id: card.id,
+              invoice_id: invoiceId,
+              description: t.description,
+              amount: Math.abs(t.amount),
+              expense_date: t.date,
+              category: 'OTHER',
+              owner_type: 'user'
+            }]);
             anyDbChange = true;
           }
-          totalCardUsed += newTotal;
         }
+      }
 
-        // 4. Update card used balance
-        if (Number(card.used) !== totalCardUsed) {
-          await supabase.from('cards').update({ used: totalCardUsed }).eq('id', card.id);
-          anyDbChange = true;
-        }
+      // 4. Recalculate ALL invoice totals and card used balances
+      if (anyDbChange) {
+        const { data: freshExpenses } = await supabase.from('card_expenses').select('*');
+        const { data: freshInvoices } = await supabase.from('card_invoices').select('*');
 
-        // 5. Trigger a data refresh or update local state if ANY change was made
-        if (anyDbChange) {
-          showNotification("Dados do cartão Inter PF corrigidos e sincronizados.");
-          setData(prev => ({
-            ...prev,
-            transactions: prev.transactions.filter(t => !transactionsToRemove.some(rt => rt.id === t.id)),
-            cardExpenses: prev.cardExpenses.filter(exp => !cardExpensesToRemove.some(re => re.id === exp.id)),
-            invoices: prev.invoices.filter(inv => !duplicateInvoiceIds.includes(inv.id)).map(inv => {
-              if (inv.cardId === card.id) {
-                const invExpenses = (freshExpenses || []).filter(e => e.invoice_id === inv.id);
-                const newTotal = invExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
-                return { ...inv, totalAmount: newTotal };
+        if (freshInvoices) {
+          for (const card of [pfCard, pjCard]) {
+            if (!card) continue;
+            let totalCardUsed = 0;
+            const cardInvoices = freshInvoices.filter(inv => inv.card_id === card.id);
+            
+            for (const inv of cardInvoices) {
+              const invExpenses = (freshExpenses || []).filter(e => e.invoice_id === inv.id);
+              const newTotal = invExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+              
+              if (Number(inv.total_amount) !== newTotal) {
+                await supabase.from('card_invoices').update({ total_amount: newTotal }).eq('id', inv.id);
               }
-              return inv;
-            }),
-            cards: prev.cards.map(c => c.id === card.id ? { ...c, used: totalCardUsed } : c)
-          }));
+              totalCardUsed += newTotal;
+            }
+
+            if (Number(card.used) !== totalCardUsed) {
+              await supabase.from('cards').update({ used: totalCardUsed }).eq('id', card.id);
+            }
+          }
+          
+          showNotification("Dados dos cartões sincronizados e corrigidos.");
+          fetchData(); // Reload everything to be sure
         }
       }
     };
@@ -600,10 +654,11 @@ export default function App() {
               
               newCardExpenses.push({
                 id: Math.random().toString(36).substr(2, 9),
+                cardId: card.id,
                 invoiceId: invoice.id,
                 description: t.description,
                 amount: Math.abs(t.amount),
-                expenseDate: transaction.date,
+                expenseDate: t.date,
                 category: 'OTHER',
                 ownerType: 'user'
               });
@@ -707,10 +762,11 @@ export default function App() {
             
             if (invoiceId) {
               await supabase.from('card_expenses').insert([{
+                card_id: card.id,
                 invoice_id: invoiceId,
                 description: t.description,
                 amount: Math.abs(t.amount),
-                expense_date: transaction.date,
+                expense_date: t.date,
                 category: 'OTHER',
                 owner_type: 'user'
               }]);
