@@ -312,90 +312,101 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [isLoading, isSupabaseConfigured, data.accounts.length]);
 
-  // One-time cleanup for the 7 installments of 17.18
+  // One-time cleanup for the 7 installments of 17.18 and data healing
   useEffect(() => {
-    if (isLoading || !isSupabaseConfigured || (data.transactions.length === 0 && data.cardExpenses.length === 0)) return;
+    if (isLoading || !isSupabaseConfigured) return;
 
-    const cleanupInstallments = async () => {
+    const healCardData = async () => {
       const targetAmount = 17.18;
-      
-      // Find transactions to remove
-      const transactionsToRemove = data.transactions.filter(t => 
-        Math.abs(t.amount) === targetAmount && 
-        t.category === 'CREDIT_CARD' && 
-        t.type === 'PF'
-      );
-
-      // Find card expenses to remove
-      const cardExpensesToRemove = data.cardExpenses.filter(exp => 
-        exp.amount === targetAmount && 
-        data.cards.find(c => c.id === exp.cardId)?.type === 'PF'
-      );
-
-      if (transactionsToRemove.length === 0 && cardExpensesToRemove.length === 0) return;
-
-      console.log(`Found ${transactionsToRemove.length} transactions and ${cardExpensesToRemove.length} card expenses of 17.18 to remove.`);
-      
       const card = data.cards.find(c => c.type === 'PF');
       if (!card) return;
 
-      const transactionIds = transactionsToRemove.map(t => t.id);
-      const expenseIds = cardExpensesToRemove.map(exp => exp.id);
-      
-      // Calculate total to remove from card used limit
-      // We should use the count of expenses since they represent the installments
-      const totalToRemove = cardExpensesToRemove.length * targetAmount;
+      let anyDbChange = false;
 
-      // Update invoices in Supabase
-      const invoiceIdsToUpdate = [...new Set(cardExpensesToRemove.map(exp => exp.invoiceId))];
-      
-      for (const invId of invoiceIdsToUpdate) {
-        const expensesInThisInvoice = cardExpensesToRemove.filter(exp => exp.invoiceId === invId);
-        const amountInThisInvoice = expensesInThisInvoice.reduce((sum, exp) => sum + exp.amount, 0);
-        
-        const invoice = data.invoices.find(inv => inv.id === invId);
-        if (invoice) {
-          const newTotal = Math.max(0, invoice.totalAmount - amountInThisInvoice);
-          await supabase.from('card_invoices').update({ total_amount: newTotal }).eq('id', invId);
+      // 1. Remove transactions and expenses of 17.18 if they still exist
+      const transactionsToRemove = data.transactions.filter(t => 
+        Math.abs(t.amount) === targetAmount && t.category === 'CREDIT_CARD' && t.type === 'PF'
+      );
+      const cardExpensesToRemove = data.cardExpenses.filter(exp => 
+        exp.amount === targetAmount && exp.cardId === card.id
+      );
+
+      if (transactionsToRemove.length > 0) {
+        await supabase.from('transactions').delete().in('id', transactionsToRemove.map(t => t.id));
+        anyDbChange = true;
+      }
+      if (cardExpensesToRemove.length > 0) {
+        await supabase.from('card_expenses').delete().in('id', cardExpensesToRemove.map(exp => exp.id));
+        anyDbChange = true;
+      }
+
+      // 2. Remove duplicate invoices (same month/year/card)
+      const seenInvoices = new Set();
+      const duplicateInvoiceIds: string[] = [];
+      data.invoices.forEach(inv => {
+        const key = `${inv.cardId}-${inv.referenceMonth}-${inv.referenceYear}`;
+        if (seenInvoices.has(key)) {
+          duplicateInvoiceIds.push(inv.id);
+        } else {
+          seenInvoices.add(key);
+        }
+      });
+
+      if (duplicateInvoiceIds.length > 0) {
+        console.log(`Removing ${duplicateInvoiceIds.length} duplicate invoices.`);
+        await supabase.from('card_invoices').delete().in('id', duplicateInvoiceIds);
+        anyDbChange = true;
+      }
+
+      // 3. Recalculate ALL invoice totals for this card
+      const { data: freshExpenses } = await supabase.from('card_expenses').select('*').eq('card_id', card.id);
+      const { data: freshInvoices } = await supabase.from('card_invoices').select('*').eq('card_id', card.id);
+
+      if (freshInvoices) {
+        let totalCardUsed = 0;
+        let anyInvoiceTotalChanged = false;
+
+        for (const inv of freshInvoices) {
+          const invExpenses = (freshExpenses || []).filter(e => e.invoice_id === inv.id);
+          const newTotal = invExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+          
+          if (Number(inv.total_amount) !== newTotal) {
+            await supabase.from('card_invoices').update({ total_amount: newTotal }).eq('id', inv.id);
+            anyInvoiceTotalChanged = true;
+            anyDbChange = true;
+          }
+          totalCardUsed += newTotal;
+        }
+
+        // 4. Update card used balance
+        if (Number(card.used) !== totalCardUsed) {
+          await supabase.from('cards').update({ used: totalCardUsed }).eq('id', card.id);
+          anyDbChange = true;
+        }
+
+        // 5. Trigger a data refresh or update local state if ANY change was made
+        if (anyDbChange) {
+          showNotification("Dados do cartão Inter PF corrigidos e sincronizados.");
+          setData(prev => ({
+            ...prev,
+            transactions: prev.transactions.filter(t => !transactionsToRemove.some(rt => rt.id === t.id)),
+            cardExpenses: prev.cardExpenses.filter(exp => !cardExpensesToRemove.some(re => re.id === exp.id)),
+            invoices: prev.invoices.filter(inv => !duplicateInvoiceIds.includes(inv.id)).map(inv => {
+              if (inv.cardId === card.id) {
+                const invExpenses = (freshExpenses || []).filter(e => e.invoice_id === inv.id);
+                const newTotal = invExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+                return { ...inv, totalAmount: newTotal };
+              }
+              return inv;
+            }),
+            cards: prev.cards.map(c => c.id === card.id ? { ...c, used: totalCardUsed } : c)
+          }));
         }
       }
-
-      // Delete card expenses in Supabase
-      if (expenseIds.length > 0) {
-        await supabase.from('card_expenses').delete().in('id', expenseIds);
-      }
-
-      // Delete transactions in Supabase
-      if (transactionIds.length > 0) {
-        await supabase.from('transactions').delete().in('id', transactionIds);
-      }
-
-      // Update card used balance in Supabase
-      // It's safer to recalculate the used balance or just subtract the found amount
-      const newUsed = Math.max(0, card.used - totalToRemove);
-      await supabase.from('cards').update({ used: newUsed }).eq('id', card.id);
-
-      // Update local state
-      setData(prev => ({
-        ...prev,
-        cards: prev.cards.map(c => c.id === card.id ? { ...c, used: newUsed } : c),
-        transactions: prev.transactions.filter(t => !transactionIds.includes(t.id)),
-        cardExpenses: prev.cardExpenses.filter(exp => !expenseIds.includes(exp.id)),
-        invoices: prev.invoices.map(inv => {
-          if (invoiceIdsToUpdate.includes(inv.id)) {
-            const expensesInThisInvoice = cardExpensesToRemove.filter(exp => exp.invoiceId === inv.id);
-            const amountInThisInvoice = expensesInThisInvoice.reduce((sum, exp) => sum + exp.amount, 0);
-            return { ...inv, totalAmount: Math.max(0, inv.totalAmount - amountInThisInvoice) };
-          }
-          return inv;
-        })
-      }));
-
-      showNotification(`Removidas ${cardExpensesToRemove.length} parcelas de R$ 17,18 do cartão Inter PF.`);
     };
 
-    cleanupInstallments();
-  }, [isLoading, isSupabaseConfigured, data.transactions.length, data.cardExpenses.length]);
+    healCardData();
+  }, [isLoading, isSupabaseConfigured, data.cards.length]);
 
   const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
     setNotification({ message, type });
@@ -1963,7 +1974,9 @@ function CardDetailsView({ cardId, data, onBack }: { cardId: string, data: any, 
                 <div className="pt-6 border-t border-white/5 space-y-4">
                   <div className="flex justify-between text-sm">
                     <span className="text-brand-text-muted">Vencimento</span>
-                    <span className="font-bold">{new Date(selectedInvoice.dueDate).toLocaleDateString('pt-BR')}</span>
+                    <span className="font-bold">
+                      {selectedInvoice.dueDate ? new Date(selectedInvoice.dueDate).toLocaleDateString('pt-BR') : 'Não definido'}
+                    </span>
                   </div>
                   
                   {card.id === 'card-pf-inter' && (
