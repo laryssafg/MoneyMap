@@ -443,6 +443,30 @@ export default function App() {
     }
   };
 
+  const handleUpdateCardLimit = async (cardId: string, newLimit: number) => {
+    try {
+      // Optimistic update
+      setData(prev => ({
+        ...prev,
+        cards: prev.cards.map(c => c.id === cardId ? { ...c, limit: newLimit } : c)
+      }));
+
+      if (isSupabaseConfigured) {
+        const { error } = await supabase
+          .from('cards')
+          .update({ limit: newLimit })
+          .eq('id', cardId);
+
+        if (error) throw error;
+      }
+
+      showNotification('Limite do cartão atualizado!');
+    } catch (error) {
+      console.error('Error updating card limit:', error);
+      showNotification('Erro ao atualizar limite', 'error');
+    }
+  };
+
   const handleSaveTransaction = async (transaction: any) => {
     if (!isSupabaseConfigured) {
       // If not configured, just update local state
@@ -935,6 +959,7 @@ export default function App() {
             data={data} 
             onBack={() => setCurrentView('cards')}
             onPayInvoice={handlePayInvoice}
+            onUpdateLimit={handleUpdateCardLimit}
             onNewPurchase={(card) => {
               setTransactionModalInitialData({
                 category: 'CREDIT_CARD',
@@ -1795,12 +1820,19 @@ function CardsView({ data, onViewTransactions, onCardClick }: { data: any, onVie
   );
 }
 
-function CardDetailsView({ cardId, data, onBack, onPayInvoice, onNewPurchase }: { cardId: string, data: any, onBack: () => void, onPayInvoice: (id: string) => void, onNewPurchase: (card: any) => void }) {
+function CardDetailsView({ cardId, data, onBack, onPayInvoice, onUpdateLimit, onNewPurchase }: { cardId: string, data: any, onBack: () => void, onPayInvoice: (id: string) => void, onUpdateLimit: (id: string, newLimit: number) => void, onNewPurchase: (card: any) => void }) {
   const card = data.cards.find((c: any) => c.id === cardId);
   const cardInvoices = data.invoices.filter((inv: any) => inv.cardId === cardId);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(
     cardInvoices.find((inv: any) => inv.isCurrentMonth)?.id || cardInvoices[0]?.id || null
   );
+
+  const [isEditingLimit, setIsEditingLimit] = useState(false);
+  const [limitValue, setLimitValue] = useState('');
+
+  useEffect(() => {
+    if (card) setLimitValue(card.limit.toString());
+  }, [card]);
 
   const selectedInvoice = cardInvoices.find((inv: any) => inv.id === selectedInvoiceId);
   const invoiceExpenses = data.cardExpenses.filter((exp: any) => exp.invoiceId === selectedInvoiceId);
@@ -1907,11 +1939,54 @@ function CardDetailsView({ cardId, data, onBack, onPayInvoice, onNewPurchase }: 
           <button className="p-2 hover:bg-white/5 rounded-xl transition-colors text-brand-text-muted">
             <Download size={20} />
           </button>
-          <button className="p-2 hover:bg-white/5 rounded-xl transition-colors text-brand-text-muted">
+          <button 
+            onClick={() => setIsEditingLimit(true)}
+            className="p-2 hover:bg-white/5 rounded-xl transition-colors text-brand-text-muted"
+          >
             <Settings size={20} />
           </button>
         </div>
       </div>
+
+      {isEditingLimit && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-brand-card w-full max-w-sm rounded-3xl border border-white/10 p-8 shadow-2xl"
+          >
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold">Editar Limite</h3>
+              <button onClick={() => setIsEditingLimit(false)} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-brand-text-muted uppercase mb-2">Novo Limite</label>
+                <input 
+                  type="number" 
+                  value={limitValue}
+                  onChange={(e) => setLimitValue(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-lg font-bold focus:outline-none focus:border-brand-accent transition-all"
+                  placeholder="0,00"
+                />
+              </div>
+              
+              <button 
+                onClick={() => {
+                  onUpdateLimit(card.id, Number(limitValue));
+                  setIsEditingLimit(false);
+                }}
+                className="w-full py-4 bg-brand-accent rounded-2xl font-bold shadow-lg shadow-brand-accent/20 hover:bg-brand-accent/90 transition-all"
+              >
+                Salvar Alteração
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* Limits Card */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
