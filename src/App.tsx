@@ -444,6 +444,11 @@ export default function App() {
   };
 
   const handleUpdateCardLimit = async (cardId: string, newLimit: number) => {
+    if (isNaN(newLimit) || newLimit < 0) {
+      showNotification('Por favor, insira um valor de limite válido', 'error');
+      return;
+    }
+
     try {
       // Optimistic update
       setData(prev => ({
@@ -454,16 +459,24 @@ export default function App() {
       if (isSupabaseConfigured) {
         const { error } = await supabase
           .from('cards')
-          .update({ limit: newLimit })
+          .update({ limit_value: newLimit })
           .eq('id', cardId);
 
-        if (error) throw error;
+        if (error) {
+          console.error('Supabase error updating card limit:', error);
+          throw error;
+        }
       }
 
       showNotification('Limite do cartão atualizado!');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating card limit:', error);
-      showNotification('Erro ao atualizar limite', 'error');
+      
+      // Revert optimistic update on error
+      fetchData(); 
+      
+      const errorMessage = error?.message || 'Erro ao atualizar limite';
+      showNotification(errorMessage, 'error');
     }
   };
 
@@ -1976,7 +1989,8 @@ function CardDetailsView({ cardId, data, onBack, onPayInvoice, onUpdateLimit, on
               
               <button 
                 onClick={() => {
-                  onUpdateLimit(card.id, Number(limitValue));
+                  const numericValue = parseFloat(limitValue.replace(',', '.'));
+                  onUpdateLimit(card.id, numericValue);
                   setIsEditingLimit(false);
                 }}
                 className="w-full py-4 bg-brand-accent rounded-2xl font-bold shadow-lg shadow-brand-accent/20 hover:bg-brand-accent/90 transition-all"
