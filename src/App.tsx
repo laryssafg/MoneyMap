@@ -430,7 +430,33 @@ export default function App() {
         }
       }
 
-      // 4. Recalculate ALL invoice totals and card used balances
+      // 4. Cleanup card expenses that don't have a corresponding transaction
+      const allTransactions = data.transactions;
+      const expensesToDelete: string[] = [];
+      
+      for (const exp of data.cardExpenses) {
+        // Only cleanup user expenses, not third party
+        if (exp.ownerType !== 'user') continue;
+        
+        const hasTransaction = allTransactions.some(t => 
+          t.category === 'CREDIT_CARD' && 
+          t.description.includes(exp.description) && 
+          Math.abs(t.amount) === exp.amount &&
+          t.date === exp.expenseDate
+        );
+        
+        if (!hasTransaction) {
+          expensesToDelete.push(exp.id);
+        }
+      }
+      
+      if (expensesToDelete.length > 0) {
+        console.log(`Cleaning up ${expensesToDelete.length} orphaned card expenses.`);
+        await supabase.from('card_expenses').delete().in('id', expensesToDelete);
+        anyDbChange = true;
+      }
+
+      // 5. Recalculate ALL invoice totals and card used balances
       if (anyDbChange) {
         const { data: freshExpenses } = await supabase.from('card_expenses').select('*');
         const { data: freshInvoices } = await supabase.from('card_invoices').select('*');
@@ -1145,9 +1171,6 @@ export default function App() {
                     if (transaction.category === 'CREDIT_CARD') {
                       const card = data.cards.find(c => c.type === transaction.type);
                       if (card) {
-                        const newUsed = transaction.flowType === 'EXPENSE' ? Math.max(0, card.used - amount) : card.used + amount;
-                        await supabase.from('cards').update({ used: newUsed }).eq('id', card.id);
-
                         // Revert invoice total amount in Supabase
                         const tDate = new Date(transaction.date + 'T12:00:00');
                         const refMonth = tDate.getMonth() + 1;
@@ -1164,13 +1187,26 @@ export default function App() {
                           await supabase.from('card_invoices').update({ total_amount: newInvoiceTotal }).eq('id', invoice.id);
 
                           // Also delete card expense from Supabase
+                          // Use a more flexible match or just delete by description, amount and date
                           await supabase.from('card_expenses')
                             .delete()
                             .match({ 
+                              card_id: card.id,
                               invoice_id: invoice.id, 
-                              description: transaction.description, 
                               amount: amount 
-                            });
+                            })
+                            .ilike('description', `%${transaction.description}%`);
+                        }
+
+                        // Recalculate total card used balance from all invoices
+                        const { data: allInvoices } = await supabase
+                          .from('card_invoices')
+                          .select('total_amount')
+                          .eq('card_id', card.id);
+                        
+                        if (allInvoices) {
+                          const totalUsed = allInvoices.reduce((sum, inv) => sum + Number(inv.total_amount), 0);
+                          await supabase.from('cards').update({ used: totalUsed }).eq('id', card.id);
                         }
                       }
                     }
