@@ -312,6 +312,91 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [isLoading, isSupabaseConfigured, data.accounts.length]);
 
+  // One-time cleanup for the 7 installments of 17.18
+  useEffect(() => {
+    if (isLoading || !isSupabaseConfigured || (data.transactions.length === 0 && data.cardExpenses.length === 0)) return;
+
+    const cleanupInstallments = async () => {
+      const targetAmount = 17.18;
+      
+      // Find transactions to remove
+      const transactionsToRemove = data.transactions.filter(t => 
+        Math.abs(t.amount) === targetAmount && 
+        t.category === 'CREDIT_CARD' && 
+        t.type === 'PF'
+      );
+
+      // Find card expenses to remove
+      const cardExpensesToRemove = data.cardExpenses.filter(exp => 
+        exp.amount === targetAmount && 
+        data.cards.find(c => c.id === exp.cardId)?.type === 'PF'
+      );
+
+      if (transactionsToRemove.length === 0 && cardExpensesToRemove.length === 0) return;
+
+      console.log(`Found ${transactionsToRemove.length} transactions and ${cardExpensesToRemove.length} card expenses of 17.18 to remove.`);
+      
+      const card = data.cards.find(c => c.type === 'PF');
+      if (!card) return;
+
+      const transactionIds = transactionsToRemove.map(t => t.id);
+      const expenseIds = cardExpensesToRemove.map(exp => exp.id);
+      
+      // Calculate total to remove from card used limit
+      // We should use the count of expenses since they represent the installments
+      const totalToRemove = cardExpensesToRemove.length * targetAmount;
+
+      // Update invoices in Supabase
+      const invoiceIdsToUpdate = [...new Set(cardExpensesToRemove.map(exp => exp.invoiceId))];
+      
+      for (const invId of invoiceIdsToUpdate) {
+        const expensesInThisInvoice = cardExpensesToRemove.filter(exp => exp.invoiceId === invId);
+        const amountInThisInvoice = expensesInThisInvoice.reduce((sum, exp) => sum + exp.amount, 0);
+        
+        const invoice = data.invoices.find(inv => inv.id === invId);
+        if (invoice) {
+          const newTotal = Math.max(0, invoice.totalAmount - amountInThisInvoice);
+          await supabase.from('card_invoices').update({ total_amount: newTotal }).eq('id', invId);
+        }
+      }
+
+      // Delete card expenses in Supabase
+      if (expenseIds.length > 0) {
+        await supabase.from('card_expenses').delete().in('id', expenseIds);
+      }
+
+      // Delete transactions in Supabase
+      if (transactionIds.length > 0) {
+        await supabase.from('transactions').delete().in('id', transactionIds);
+      }
+
+      // Update card used balance in Supabase
+      // It's safer to recalculate the used balance or just subtract the found amount
+      const newUsed = Math.max(0, card.used - totalToRemove);
+      await supabase.from('cards').update({ used: newUsed }).eq('id', card.id);
+
+      // Update local state
+      setData(prev => ({
+        ...prev,
+        cards: prev.cards.map(c => c.id === card.id ? { ...c, used: newUsed } : c),
+        transactions: prev.transactions.filter(t => !transactionIds.includes(t.id)),
+        cardExpenses: prev.cardExpenses.filter(exp => !expenseIds.includes(exp.id)),
+        invoices: prev.invoices.map(inv => {
+          if (invoiceIdsToUpdate.includes(inv.id)) {
+            const expensesInThisInvoice = cardExpensesToRemove.filter(exp => exp.invoiceId === inv.id);
+            const amountInThisInvoice = expensesInThisInvoice.reduce((sum, exp) => sum + exp.amount, 0);
+            return { ...inv, totalAmount: Math.max(0, inv.totalAmount - amountInThisInvoice) };
+          }
+          return inv;
+        })
+      }));
+
+      showNotification(`Removidas ${cardExpensesToRemove.length} parcelas de R$ 17,18 do cartão Inter PF.`);
+    };
+
+    cleanupInstallments();
+  }, [isLoading, isSupabaseConfigured, data.transactions.length, data.cardExpenses.length]);
+
   const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 5000);
