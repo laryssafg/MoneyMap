@@ -11,6 +11,7 @@ export const INITIAL_DATA: FinancialState = {
     { id: "pj-inter", name: "Inter PJ", bank: "Inter", balance: 0, type: "PJ", logoUrl: "https://logo.clearbit.com/inter.co" },
     { id: "pj-nubank", name: "Nubank PJ", bank: "Nubank", balance: 0, type: "PJ", logoUrl: "https://logo.clearbit.com/nubank.com.br" },
     { id: "pj-mp", name: "Mercado Pago", bank: "Mercado Pago", balance: 0, type: "PJ", logoUrl: "https://logo.clearbit.com/mercadopago.com.br" },
+    { id: "pf-99pay", name: "99Pay", bank: "99Pay", balance: 0, type: "PF", logoUrl: "https://i.imgur.com/vH9vH9v.png", yieldRate: 0.12375 }, // 110% of 11.25% CDI
   ],
   cards: [
     { id: "card-pf-inter", name: "Inter PF", bank: "Inter", limit: 3000, used: 0, dueDate: 7, type: "PF", logoUrl: "https://logo.clearbit.com/inter.co" },

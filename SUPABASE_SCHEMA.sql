@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   balance DECIMAL(15, 2) DEFAULT 0,
   type TEXT CHECK (type IN ('PF', 'PJ')),
   logo_url TEXT,
+  yield_rate DECIMAL(5, 4) DEFAULT 0, -- Annual yield rate (e.g. 0.1237 for 110% of 11.25% CDI)
+  last_yield_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

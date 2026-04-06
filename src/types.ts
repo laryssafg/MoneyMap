@@ -7,6 +7,8 @@ export interface Account {
   balance: number;
   type: EntityType;
   logoUrl?: string;
+  yieldRate?: number;
+  lastYieldAt?: string;
 }
 
 export interface CreditCard {

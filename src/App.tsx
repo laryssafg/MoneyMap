@@ -167,7 +167,13 @@ export default function App() {
         // If we are configured, we should prefer DB data even if empty
         setData(prev => ({
           ...prev,
-          accounts: accounts?.map(a => ({ ...a, balance: Number(a.balance), logoUrl: a.logo_url })) || [],
+          accounts: accounts?.map(a => ({ 
+            ...a, 
+            balance: Number(a.balance), 
+            logoUrl: a.logo_url,
+            yieldRate: Number(a.yield_rate),
+            lastYieldAt: a.last_yield_at
+          })) || [],
           cards: cards?.map(c => ({ 
             ...c, 
             limit: Number(c.limit_value), 
@@ -229,6 +235,82 @@ export default function App() {
 
     fetchData();
   }, []);
+
+  // Yield processing
+  useEffect(() => {
+    if (isLoading || !isSupabaseConfigured || data.accounts.length === 0) return;
+
+    const processYields = async () => {
+      const today = new Date();
+      const dayOfWeek = today.getDay();
+      const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+      
+      if (!isWeekday) return;
+
+      const todayStr = today.toISOString().split('T')[0];
+      const accountsToUpdate = data.accounts.filter(acc => 
+        acc.yieldRate && acc.yieldRate > 0 && 
+        (!acc.lastYieldAt || acc.lastYieldAt.split('T')[0] !== todayStr)
+      );
+
+      if (accountsToUpdate.length === 0) return;
+
+      for (const acc of accountsToUpdate) {
+        // Daily yield formula: (1 + annualRate)^(1/252) - 1
+        const dailyRate = Math.pow(1 + acc.yieldRate, 1/252) - 1;
+        const yieldAmount = acc.balance * dailyRate;
+        
+        if (yieldAmount <= 0.001) continue; // Skip very small yields
+
+        const newBalance = acc.balance + yieldAmount;
+        
+        try {
+          const { error } = await supabase.from('accounts')
+            .update({ 
+              balance: newBalance, 
+              last_yield_at: today.toISOString() 
+            })
+            .eq('id', acc.id);
+
+          if (!error) {
+            setData(prev => ({
+              ...prev,
+              accounts: prev.accounts.map(a => a.id === acc.id ? { ...a, balance: newBalance, lastYieldAt: today.toISOString() } : a),
+              transactions: [{
+                id: Math.random().toString(36).substr(2, 9),
+                description: `Rendimento Diário - ${acc.name}`,
+                amount: yieldAmount,
+                date: todayStr,
+                category: 'INVESTMENT',
+                type: acc.type,
+                flowType: 'INCOME',
+                accountId: acc.id
+              }, ...prev.transactions]
+            }));
+            
+            // Also save the transaction to Supabase
+            await supabase.from('transactions').insert([{
+              description: `Rendimento Diário - ${acc.name}`,
+              amount: yieldAmount,
+              date: todayStr,
+              category: 'INVESTMENT',
+              type: acc.type,
+              flow_type: 'INCOME',
+              account_id: acc.id
+            }]);
+
+            showNotification(`Rendimento aplicado: R$ ${yieldAmount.toFixed(2)} na conta ${acc.name}`);
+          }
+        } catch (err) {
+          console.error('Error processing yield:', err);
+        }
+      }
+    };
+
+    // Small delay to ensure data is stable
+    const timer = setTimeout(processYields, 2000);
+    return () => clearTimeout(timer);
+  }, [isLoading, isSupabaseConfigured, data.accounts.length]);
 
   const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
     setNotification({ message, type });
@@ -543,7 +625,8 @@ export default function App() {
         bank: account.bank,
         balance: account.balance,
         type: account.type,
-        logo_url: account.logoUrl
+        logo_url: account.logoUrl,
+        yield_rate: account.yieldRate || 0
       }]).select().single();
       
       if (error) {
@@ -2118,7 +2201,14 @@ function AccountsView({ data, onViewTransactions, onTransfer, onAdd }: { data: a
               <div className="flex items-center gap-3">
                 <BankLogo url={acc.logoUrl} name={acc.bank} className="w-12 h-12 p-1.5" />
                 <div>
-                  <h4 className="font-bold">{acc.name}</h4>
+                  <div className="flex items-center gap-2">
+                    <h4 className="font-bold">{acc.name}</h4>
+                    {acc.yieldRate > 0 && (
+                      <span className="px-1.5 py-0.5 bg-green-500/10 text-green-500 text-[8px] font-bold rounded border border-green-500/20 animate-pulse">
+                        RENDENDO
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[10px] text-brand-text-muted uppercase font-bold tracking-widest">{acc.bank}</p>
                 </div>
               </div>
@@ -2605,6 +2695,16 @@ function AccountModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClose: (
   const [bank, setBank] = useState('');
   const [balance, setBalance] = useState('');
   const [type, setType] = useState<'PF' | 'PJ'>('PF');
+  const [hasYield, setHasYield] = useState(false);
+  const [yieldRate, setYieldRate] = useState('0.12375'); // 110% CDI default
+
+  useEffect(() => {
+    if (name.toLowerCase().includes('99pay')) {
+      setHasYield(true);
+      setYieldRate('0.12375');
+      setBank('99Pay');
+    }
+  }, [name]);
 
   if (!isOpen) return null;
 
@@ -2628,7 +2728,7 @@ function AccountModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClose: (
           </button>
         </div>
 
-        <div className="p-8 space-y-6">
+        <div className="p-8 space-y-6 max-h-[70vh] overflow-y-auto scrollbar-hide">
           <div className="space-y-2">
             <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Nome da Conta</label>
             <input 
@@ -2675,6 +2775,41 @@ function AccountModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClose: (
             </div>
           </div>
 
+          <div className="pt-4 border-t border-white/5 space-y-4">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Rendimento Automático</label>
+              <button 
+                onClick={() => setHasYield(!hasYield)}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-all relative",
+                  hasYield ? "bg-brand-accent" : "bg-white/10"
+                )}
+              >
+                <motion.div 
+                  animate={{ x: hasYield ? 24 : 4 }}
+                  className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm"
+                />
+              </button>
+            </div>
+
+            {hasYield && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                className="space-y-2"
+              >
+                <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Taxa Anual (Ex: 0.12375 para 110% CDI)</label>
+                <input 
+                  type="number" 
+                  step="0.00001"
+                  value={yieldRate}
+                  onChange={(e) => setYieldRate(e.target.value)}
+                  className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all"
+                />
+              </motion.div>
+            )}
+          </div>
+
           <button 
             onClick={() => {
               if (name && bank && balance !== '') {
@@ -2684,12 +2819,16 @@ function AccountModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClose: (
                   bank,
                   balance: parseFloat(balance),
                   type,
-                  logoUrl: `https://logo.clearbit.com/${bank.toLowerCase().replace(/\s/g, '')}.com.br`
+                  logoUrl: bank.toLowerCase().includes('99pay') 
+                    ? "https://i.imgur.com/vH9vH9v.png"
+                    : `https://logo.clearbit.com/${bank.toLowerCase().replace(/\s/g, '')}.com.br`,
+                  yieldRate: hasYield ? parseFloat(yieldRate) : 0
                 });
                 setName('');
                 setBank('');
                 setBalance('');
                 setType('PF');
+                setHasYield(false);
                 onClose();
               }
             }}
