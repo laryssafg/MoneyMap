@@ -90,6 +90,7 @@ export default function App() {
   const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [isImpactModalOpen, setIsImpactModalOpen] = useState(false);
+  const [transactionModalInitialData, setTransactionModalInitialData] = useState<any>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
@@ -411,6 +412,35 @@ export default function App() {
   const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 5000);
+  };
+
+  const handlePayInvoice = async (invoiceId: string) => {
+    try {
+      const invoice = data.invoices.find(inv => inv.id === invoiceId);
+      if (!invoice) return;
+
+      // Optimistic update
+      setData(prev => ({
+        ...prev,
+        invoices: prev.invoices.map(inv => 
+          inv.id === invoiceId ? { ...inv, status: 'paid' } : inv
+        )
+      }));
+
+      if (isSupabaseConfigured) {
+        const { error } = await supabase
+          .from('card_invoices')
+          .update({ status: 'paid' })
+          .eq('id', invoiceId);
+
+        if (error) throw error;
+      }
+
+      showNotification('Fatura marcada como paga!');
+    } catch (error) {
+      console.error('Error paying invoice:', error);
+      showNotification('Erro ao pagar fatura', 'error');
+    }
   };
 
   const handleSaveTransaction = async (transaction: any) => {
@@ -903,7 +933,16 @@ export default function App() {
           <CardDetailsView 
             cardId={selectedCardId!} 
             data={data} 
-            onBack={() => setCurrentView('cards')} 
+            onBack={() => setCurrentView('cards')}
+            onPayInvoice={handlePayInvoice}
+            onNewPurchase={(card) => {
+              setTransactionModalInitialData({
+                category: 'CREDIT_CARD',
+                type: card.type,
+                description: `Compra no ${card.name}`
+              });
+              setIsTransactionModalOpen(true);
+            }}
           />
         );
       case 'transactions':
@@ -1244,9 +1283,13 @@ export default function App() {
 
       <TransactionModal 
         isOpen={isTransactionModalOpen}
-        onClose={() => setIsTransactionModalOpen(false)}
+        onClose={() => {
+          setIsTransactionModalOpen(false);
+          setTransactionModalInitialData(null);
+        }}
         onSave={handleSaveTransaction}
         accounts={data.accounts}
+        initialData={transactionModalInitialData}
       />
 
       <AccountModal 
@@ -1752,7 +1795,7 @@ function CardsView({ data, onViewTransactions, onCardClick }: { data: any, onVie
   );
 }
 
-function CardDetailsView({ cardId, data, onBack }: { cardId: string, data: any, onBack: () => void }) {
+function CardDetailsView({ cardId, data, onBack, onPayInvoice, onNewPurchase }: { cardId: string, data: any, onBack: () => void, onPayInvoice: (id: string) => void, onNewPurchase: (card: any) => void }) {
   const card = data.cards.find((c: any) => c.id === cardId);
   const cardInvoices = data.invoices.filter((inv: any) => inv.cardId === cardId);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(
@@ -1993,12 +2036,20 @@ function CardDetailsView({ cardId, data, onBack }: { cardId: string, data: any, 
                   )}
                 </div>
 
-                <div className="pt-6 grid grid-cols-2 gap-3">
-                  <button className="flex items-center justify-center gap-2 py-3 bg-brand-accent rounded-2xl font-bold text-sm hover:bg-brand-accent/90 transition-colors">
-                    <CheckCircle2 size={16} />
-                    Pagar
-                  </button>
-                  <button className="flex items-center justify-center gap-2 py-3 bg-white/5 rounded-2xl font-bold text-sm hover:bg-white/10 transition-colors">
+                <div className={cn("pt-6 grid gap-3", selectedInvoice.status !== 'paid' ? "grid-cols-2" : "grid-cols-1")}>
+                  {selectedInvoice.status !== 'paid' && (
+                    <button 
+                      onClick={() => onPayInvoice(selectedInvoice.id)}
+                      className="flex items-center justify-center gap-2 py-3 bg-brand-accent rounded-2xl font-bold text-sm hover:bg-brand-accent/90 transition-colors"
+                    >
+                      <CheckCircle2 size={16} />
+                      Pagar
+                    </button>
+                  )}
+                  <button 
+                    onClick={() => onNewPurchase(card)}
+                    className="flex items-center justify-center gap-2 py-3 bg-white/5 rounded-2xl font-bold text-sm hover:bg-white/10 transition-colors"
+                  >
                     <PlusCircle size={16} />
                     Compra
                   </button>
@@ -2572,7 +2623,7 @@ function TransferModal({ isOpen, onClose, accounts, onTransfer }: { isOpen: bool
   );
 }
 
-function TransactionModal({ isOpen, onClose, onSave, accounts }: { isOpen: boolean, onClose: () => void, onSave: (t: any) => void, accounts: any[] }) {
+function TransactionModal({ isOpen, onClose, onSave, accounts, initialData }: { isOpen: boolean, onClose: () => void, onSave: (t: any) => void, accounts: any[], initialData?: any }) {
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
@@ -2581,6 +2632,19 @@ function TransactionModal({ isOpen, onClose, onSave, accounts }: { isOpen: boole
   const [flowType, setFlowType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE');
   const [installments, setInstallments] = useState('1');
   const [accountId, setAccountId] = useState('');
+
+  useEffect(() => {
+    if (isOpen) {
+      setDescription(initialData?.description || '');
+      setAmount(initialData?.amount || '');
+      setDate(initialData?.date || new Date().toISOString().split('T')[0]);
+      setCategory(initialData?.category || 'OUTROS');
+      setType(initialData?.type || 'PF');
+      setFlowType(initialData?.flowType || 'EXPENSE');
+      setInstallments(initialData?.installments || '1');
+      setAccountId(initialData?.accountId || '');
+    }
+  }, [isOpen, initialData]);
 
   const filteredAccounts = accounts.filter(acc => acc.type === type);
 
