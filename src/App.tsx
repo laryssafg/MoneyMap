@@ -96,6 +96,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [transactionFilter, setTransactionFilter] = useState('');
   const [isSupabaseConfigured, setIsSupabaseConfigured] = useState(true);
+  const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme');
     return (saved as 'light' | 'dark') || 'dark';
@@ -127,24 +128,29 @@ export default function App() {
   // Fetch data from Supabase on mount
   useEffect(() => {
     const isConfigured = import.meta.env.VITE_SUPABASE_URL && 
-                        import.meta.env.VITE_SUPABASE_URL !== 'your_supabase_url' &&
+                        import.meta.env.VITE_SUPABASE_URL.includes('supabase.co') &&
                         import.meta.env.VITE_SUPABASE_ANON_KEY &&
-                        import.meta.env.VITE_SUPABASE_ANON_KEY !== 'your_supabase_anon_key';
+                        import.meta.env.VITE_SUPABASE_ANON_KEY.length > 20;
     
     setIsSupabaseConfigured(!!isConfigured);
+
+    if (!isConfigured) {
+      setIsLoading(false);
+      return;
+    }
 
     async function fetchData() {
       try {
         const [
-          { data: accounts },
-          { data: cards },
-          { data: debts },
-          { data: investments },
-          { data: goals },
-          { data: transactions },
-          { data: profile },
-          { data: invoices },
-          { data: cardExpenses }
+          { data: accounts, error: accError },
+          { data: cards, error: cardError },
+          { data: debts, error: debtError },
+          { data: investments, error: invError },
+          { data: goals, error: goalError },
+          { data: transactions, error: transError },
+          { data: profile, error: profError },
+          { data: invoices, error: invoiceError },
+          { data: cardExpenses, error: expError }
         ] = await Promise.all([
           supabase.from('accounts').select('*'),
           supabase.from('cards').select('*'),
@@ -157,57 +163,63 @@ export default function App() {
           supabase.from('card_expenses').select('*').order('expense_date', { ascending: false })
         ]);
 
-        if (accounts && accounts.length > 0) {
-          setData(prev => ({
-            ...prev,
-            accounts: accounts.map(a => ({ ...a, balance: Number(a.balance), logoUrl: a.logo_url })),
-            cards: cards?.map(c => ({ 
-              ...c, 
-              limit: Number(c.limit_value), 
-              used: Number(c.used),
-              dueDate: c.due_date,
-              closingDay: c.closing_day,
-              logoUrl: c.logo_url
-            })) || [],
-            invoices: invoices?.map(inv => ({
-              ...inv,
-              totalAmount: Number(inv.total_amount),
-              userShare: Number(inv.user_share),
-              thirdPartyShare: Number(inv.third_party_share),
-              referenceMonth: inv.reference_month,
-              referenceYear: inv.reference_year,
-              isCurrentMonth: inv.is_current_month,
-              cardId: inv.card_id,
-              thirdPartyName: inv.third_party_name
-            })) || [],
-            cardExpenses: cardExpenses?.map(exp => ({
-              ...exp,
-              amount: Number(exp.amount),
-              expenseDate: exp.expense_date,
-              merchantName: exp.merchant_name,
-              currentInstallment: exp.current_installment,
-              ownerType: exp.owner_type,
-              ownerName: exp.owner_name,
-              cardId: exp.card_id,
-              invoiceId: exp.invoice_id
-            })) || [],
-            debts: debts?.map(d => ({ 
-              ...d, 
-              totalValue: Number(d.total_value), 
-              remainingValue: Number(d.remaining_value),
-              dueDate: d.due_date,
-              installments: d.installments_total ? {
-                total: d.installments_total,
-                paid: d.installments_paid,
-                value: Number(d.installments_value)
-              } : undefined
-            })) || [],
-            investments: investments?.map(i => ({ ...i, value: Number(i.value) })) || [],
-            goals: goals?.map(g => ({ ...g, targetValue: Number(g.target_value), currentValue: Number(g.current_value) })) || [],
-            transactions: transactions?.map(t => ({ ...t, amount: Number(t.amount) })) || [],
-            monthlyIncome: profile ? Number(profile.monthly_income) : prev.monthlyIncome
-          }));
-        }
+        // Check if we have at least some data or if we should clear initial data
+        // If we are configured, we should prefer DB data even if empty
+        setData(prev => ({
+          ...prev,
+          accounts: accounts?.map(a => ({ ...a, balance: Number(a.balance), logoUrl: a.logo_url })) || [],
+          cards: cards?.map(c => ({ 
+            ...c, 
+            limit: Number(c.limit_value), 
+            used: Number(c.used),
+            dueDate: c.due_date,
+            closingDay: c.closing_day,
+            logoUrl: c.logo_url
+          })) || [],
+          invoices: invoices?.map(inv => ({
+            ...inv,
+            totalAmount: Number(inv.total_amount),
+            userShare: Number(inv.user_share),
+            thirdPartyShare: Number(inv.third_party_share),
+            referenceMonth: inv.reference_month,
+            referenceYear: inv.reference_year,
+            isCurrentMonth: inv.is_current_month,
+            cardId: inv.card_id,
+            thirdPartyName: inv.third_party_name
+          })) || [],
+          cardExpenses: cardExpenses?.map(exp => ({
+            ...exp,
+            amount: Number(exp.amount),
+            expenseDate: exp.expense_date,
+            merchantName: exp.merchant_name,
+            currentInstallment: exp.current_installment,
+            ownerType: exp.owner_type,
+            ownerName: exp.owner_name,
+            cardId: exp.card_id,
+            invoiceId: exp.invoice_id
+          })) || [],
+          debts: debts?.map(d => ({ 
+            ...d, 
+            totalValue: Number(d.total_value), 
+            remainingValue: Number(d.remaining_value),
+            dueDate: d.due_date,
+            installments: d.installments_total ? {
+              total: d.installments_total,
+              paid: d.installments_paid,
+              value: Number(d.installments_value)
+            } : undefined
+          })) || [],
+          investments: investments?.map(i => ({ ...i, value: Number(i.value) })) || [],
+          goals: goals?.map(g => ({ ...g, targetValue: Number(g.target_value), currentValue: Number(g.current_value) })) || [],
+          transactions: transactions?.map(t => ({ 
+            ...t, 
+            amount: Number(t.amount),
+            accountId: t.account_id,
+            flowType: t.flow_type
+          })) || [],
+          monthlyIncome: profile ? Number(profile.monthly_income) : prev.monthlyIncome
+        }));
+
       } catch (error) {
         console.error('Error fetching data from Supabase:', error);
       } finally {
@@ -218,7 +230,38 @@ export default function App() {
     fetchData();
   }, []);
 
+  const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 5000);
+  };
+
   const handleSaveTransaction = async (transaction: any) => {
+    if (!isSupabaseConfigured) {
+      // If not configured, just update local state
+      setData(prev => {
+        let newAccounts = [...prev.accounts];
+        if (transaction.accountId) {
+          newAccounts = prev.accounts.map(acc => {
+            if (acc.id === transaction.accountId) {
+              const amount = Math.abs(transaction.amount);
+              return { 
+                ...acc, 
+                balance: transaction.flowType === 'INCOME' ? acc.balance + amount : acc.balance - amount 
+              };
+            }
+            return acc;
+          });
+        }
+
+        return {
+          ...prev,
+          accounts: newAccounts,
+          transactions: [transaction, ...prev.transactions]
+        };
+      });
+      return;
+    }
+
     const installments = transaction.installments || 1;
     const installmentAmount = transaction.amount / installments;
     
@@ -266,7 +309,22 @@ export default function App() {
       let newCards = [...prev.cards];
       let newInvoices = [...prev.invoices];
       let newCardExpenses = [...prev.cardExpenses];
+      let newAccounts = [...prev.accounts];
       
+      // Update account balance if account is selected
+      if (transaction.accountId) {
+        newAccounts = prev.accounts.map(acc => {
+          if (acc.id === transaction.accountId) {
+            const amount = Math.abs(transaction.amount);
+            return { 
+              ...acc, 
+              balance: transaction.flowType === 'INCOME' ? acc.balance + amount : acc.balance - amount 
+            };
+          }
+          return acc;
+        });
+      }
+
       if (transaction.category === 'CREDIT_CARD') {
         const card = prev.cards.find(c => c.type === transaction.type);
         if (card) {
@@ -314,6 +372,7 @@ export default function App() {
         cards: newCards,
         invoices: newInvoices,
         cardExpenses: newCardExpenses,
+        accounts: newAccounts,
         transactions: [...transactionsToSave, ...prev.transactions]
       };
     });
@@ -325,12 +384,17 @@ export default function App() {
         date: t.date,
         category: t.category,
         type: t.type,
-        flow_type: t.flowType
+        flow_type: t.flowType,
+        account_id: t.accountId
       }))).select();
       
-      if (tError) throw tError;
+      if (tError) {
+        showNotification('Erro ao salvar transação no Supabase', 'error');
+        throw tError;
+      }
 
       if (savedTransactions) {
+        showNotification('Transação salva com sucesso!');
         setData(prev => ({
           ...prev,
           transactions: prev.transactions.map(t => {
@@ -342,6 +406,16 @@ export default function App() {
             return saved ? { ...t, id: saved.id } : t;
           })
         }));
+      }
+
+      // Update account balance in Supabase
+      if (transaction.accountId) {
+        const account = data.accounts.find(a => a.id === transaction.accountId);
+        if (account) {
+          const amount = Math.abs(transaction.amount);
+          const newBalance = transaction.flowType === 'INCOME' ? account.balance + amount : account.balance - amount;
+          await supabase.from('accounts').update({ balance: newBalance }).eq('id', account.id);
+        }
       }
 
       if (transaction.category === 'CREDIT_CARD') {
@@ -461,6 +535,8 @@ export default function App() {
       accounts: [...prev.accounts, account]
     }));
 
+    if (!isSupabaseConfigured) return;
+
     try {
       const { data: newAccount, error } = await supabase.from('accounts').insert([{
         name: account.name,
@@ -470,9 +546,13 @@ export default function App() {
         logo_url: account.logoUrl
       }]).select().single();
       
-      if (error) throw error;
+      if (error) {
+        showNotification('Erro ao salvar conta no Supabase', 'error');
+        throw error;
+      }
 
       if (newAccount) {
+        showNotification('Conta salva com sucesso!');
         setData(prev => ({
           ...prev,
           accounts: prev.accounts.map(a => a.id === account.id ? { ...a, id: newAccount.id } : a)
@@ -480,7 +560,6 @@ export default function App() {
       }
     } catch (error) {
       console.error('Error syncing account with Supabase:', error);
-      // Revert optimistic update if needed, but for now just log
     }
   };
 
@@ -489,6 +568,8 @@ export default function App() {
       ...prev,
       debts: [...prev.debts, debt]
     }));
+
+    if (!isSupabaseConfigured) return;
 
     try {
       const { data: newDebt, error } = await supabase.from('debts').insert([{
@@ -505,9 +586,13 @@ export default function App() {
         installments_value: debt.installments?.value
       }]).select().single();
       
-      if (error) throw error;
+      if (error) {
+        showNotification('Erro ao salvar dívida no Supabase', 'error');
+        throw error;
+      }
 
       if (newDebt) {
+        showNotification('Dívida salva com sucesso!');
         setData(prev => ({
           ...prev,
           debts: prev.debts.map(d => d.id === debt.id ? { ...d, id: newDebt.id } : d)
@@ -524,6 +609,8 @@ export default function App() {
       goals: [...prev.goals, goal]
     }));
 
+    if (!isSupabaseConfigured) return;
+
     try {
       const { data: newGoal, error } = await supabase.from('goals').insert([{
         name: goal.name,
@@ -532,9 +619,13 @@ export default function App() {
         deadline: goal.deadline
       }]).select().single();
       
-      if (error) throw error;
+      if (error) {
+        showNotification('Erro ao salvar meta no Supabase', 'error');
+        throw error;
+      }
 
       if (newGoal) {
+        showNotification('Meta salva com sucesso!');
         setData(prev => ({
           ...prev,
           goals: prev.goals.map(g => g.id === goal.id ? { ...g, id: newGoal.id } : g)
@@ -551,10 +642,17 @@ export default function App() {
       goals: prev.goals.filter(g => g.id !== id)
     }));
 
-    try {
-      await supabase.from('goals').delete().eq('id', id);
-    } catch (error) {
-      console.error('Error deleting goal from Supabase:', error);
+    if (isSupabaseConfigured) {
+      try {
+        const { error } = await supabase.from('goals').delete().eq('id', id);
+        if (error) {
+          showNotification('Erro ao excluir meta no Supabase', 'error');
+        } else {
+          showNotification('Meta excluída com sucesso!');
+        }
+      } catch (error) {
+        console.error('Error deleting goal from Supabase:', error);
+      }
     }
   };
 
@@ -636,16 +734,53 @@ export default function App() {
             initialFilter={transactionFilter}
             onDelete={async (id) => {
               // Optimistic update
-              setData(prev => ({
-                ...prev,
-                transactions: prev.transactions.filter(t => t.id !== id)
-              }));
+              setData(prev => {
+                const transaction = prev.transactions.find(t => t.id === id);
+                let newAccounts = [...prev.accounts];
+                if (transaction && transaction.accountId) {
+                  newAccounts = prev.accounts.map(acc => {
+                    if (acc.id === transaction.accountId) {
+                      const amount = Math.abs(transaction.amount);
+                      // Revert: if it was INCOME, subtract. If it was EXPENSE, add.
+                      return { 
+                        ...acc, 
+                        balance: transaction.flowType === 'INCOME' ? acc.balance - amount : acc.balance + amount 
+                      };
+                    }
+                    return acc;
+                  });
+                }
+                return {
+                  ...prev,
+                  accounts: newAccounts,
+                  transactions: prev.transactions.filter(t => t.id !== id)
+                };
+              });
 
               // Sync with Supabase
-              try {
-                await supabase.from('transactions').delete().eq('id', id);
-              } catch (error) {
-                console.error('Error deleting transaction from Supabase:', error);
+              if (isSupabaseConfigured) {
+                try {
+                  const transaction = data.transactions.find(t => t.id === id);
+                  
+                  // Revert account balance in Supabase
+                  if (transaction && transaction.accountId) {
+                    const account = data.accounts.find(a => a.id === transaction.accountId);
+                    if (account) {
+                      const amount = Math.abs(transaction.amount);
+                      const newBalance = transaction.flowType === 'INCOME' ? account.balance - amount : account.balance + amount;
+                      await supabase.from('accounts').update({ balance: newBalance }).eq('id', account.id);
+                    }
+                  }
+
+                  const { error } = await supabase.from('transactions').delete().eq('id', id);
+                  if (error) {
+                    showNotification('Erro ao excluir transação no Supabase', 'error');
+                  } else {
+                    showNotification('Transação excluída com sucesso!');
+                  }
+                } catch (error) {
+                  console.error('Error deleting transaction from Supabase:', error);
+                }
               }
             }} 
             onAdd={() => setIsTransactionModalOpen(true)}
@@ -666,6 +801,26 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-brand-bg overflow-hidden">
+      {/* Notifications */}
+      <AnimatePresence>
+        {notification && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, x: '-50%' }}
+            animate={{ opacity: 1, y: 0, x: '-50%' }}
+            exit={{ opacity: 0, y: 20, x: '-50%' }}
+            className={cn(
+              "fixed bottom-8 left-1/2 z-[100] px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border backdrop-blur-md",
+              notification.type === 'error' 
+                ? "bg-red-500/10 border-red-500/20 text-red-400" 
+                : "bg-green-500/10 border-green-500/20 text-green-400"
+            )}
+          >
+            {notification.type === 'error' ? <AlertCircle size={20} /> : <ShieldCheck size={20} />}
+            <span className="text-sm font-bold">{notification.message}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Supabase Warning */}
       {!isSupabaseConfigured && (
         <div className="fixed top-4 right-4 z-[100] max-w-md bg-red-500/10 border border-red-500/20 backdrop-blur-md p-4 rounded-2xl flex items-start gap-4 shadow-2xl animate-in fade-in slide-in-from-top-4">
@@ -822,6 +977,7 @@ export default function App() {
         isOpen={isTransactionModalOpen}
         onClose={() => setIsTransactionModalOpen(false)}
         onSave={handleSaveTransaction}
+        accounts={data.accounts}
       />
 
       <AccountModal 
@@ -2136,7 +2292,7 @@ function TransferModal({ isOpen, onClose, accounts, onTransfer }: { isOpen: bool
   );
 }
 
-function TransactionModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClose: () => void, onSave: (t: any) => void }) {
+function TransactionModal({ isOpen, onClose, onSave, accounts }: { isOpen: boolean, onClose: () => void, onSave: (t: any) => void, accounts: any[] }) {
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
@@ -2144,6 +2300,9 @@ function TransactionModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClos
   const [type, setType] = useState<'PF' | 'PJ'>('PF');
   const [flowType, setFlowType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE');
   const [installments, setInstallments] = useState('1');
+  const [accountId, setAccountId] = useState('');
+
+  const filteredAccounts = accounts.filter(acc => acc.type === type);
 
   if (!isOpen) return null;
 
@@ -2165,7 +2324,10 @@ function TransactionModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClos
           <div className="grid grid-cols-2 gap-4">
             <div className="flex p-1 bg-white/5 rounded-2xl border border-white/10">
               <button 
-                onClick={() => setType('PF')}
+                onClick={() => {
+                  setType('PF');
+                  setAccountId('');
+                }}
                 className={cn(
                   "flex-1 py-3 rounded-xl text-[10px] font-bold transition-all",
                   type === 'PF' ? "bg-blue-500 text-white shadow-lg shadow-blue-500/20" : "text-brand-text-muted hover:text-white"
@@ -2174,7 +2336,10 @@ function TransactionModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClos
                 PF
               </button>
               <button 
-                onClick={() => setType('PJ')}
+                onClick={() => {
+                  setType('PJ');
+                  setAccountId('');
+                }}
                 className={cn(
                   "flex-1 py-3 rounded-xl text-[10px] font-bold transition-all",
                   type === 'PJ' ? "bg-purple-500 text-white shadow-lg shadow-purple-500/20" : "text-brand-text-muted hover:text-white"
@@ -2203,6 +2368,38 @@ function TransactionModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClos
               >
                 Saída
               </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-brand-text-muted uppercase mb-2">Conta</label>
+              <select 
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm focus:outline-none focus:border-brand-accent transition-all appearance-none"
+              >
+                <option value="" className="bg-brand-card">Selecionar Conta</option>
+                {filteredAccounts.map(acc => (
+                  <option key={acc.id} value={acc.id} className="bg-brand-card">{acc.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-brand-text-muted uppercase mb-2">Categoria</label>
+              <select 
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm focus:outline-none focus:border-brand-accent transition-all appearance-none"
+              >
+                <option value="PERSONAL" className="bg-brand-card">Pessoal</option>
+                <option value="FIXED_COST" className="bg-brand-card">Custo Fixo</option>
+                <option value="VARIABLE_COST" className="bg-brand-card">Custo Variável</option>
+                <option value="REVENUE" className="bg-brand-card">Receita</option>
+                <option value="INVESTMENT" className="bg-brand-card">Investimento</option>
+                <option value="CREDIT_CARD" className="bg-brand-card">Cartão de Crédito</option>
+                <option value="OUTROS" className="bg-brand-card">Outros</option>
+              </select>
             </div>
           </div>
 
@@ -2239,23 +2436,6 @@ function TransactionModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClos
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-bold text-brand-text-muted uppercase mb-2">Categoria</label>
-            <select 
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm focus:outline-none focus:border-brand-accent transition-all"
-            >
-              <option value="PERSONAL" className="bg-brand-card">Pessoal</option>
-              <option value="FIXED_COST" className="bg-brand-card">Custo Fixo</option>
-              <option value="VARIABLE_COST" className="bg-brand-card">Custo Variável</option>
-              <option value="REVENUE" className="bg-brand-card">Receita</option>
-              <option value="INVESTMENT" className="bg-brand-card">Investimento</option>
-              <option value="CREDIT_CARD" className="bg-brand-card">Cartão de Crédito</option>
-              <option value="OUTROS" className="bg-brand-card">Outros</option>
-            </select>
-          </div>
-
           {category === 'CREDIT_CARD' && (
             <motion.div 
               initial={{ opacity: 0, y: -10 }}
@@ -2285,7 +2465,8 @@ function TransactionModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClos
                   category,
                   type,
                   flowType,
-                  installments: parseInt(installments) || 1
+                  installments: parseInt(installments) || 1,
+                  accountId: accountId || null
                 });
                 setDescription('');
                 setAmount('');
@@ -2294,6 +2475,7 @@ function TransactionModal({ isOpen, onClose, onSave }: { isOpen: boolean, onClos
                 setType('PF');
                 setFlowType('EXPENSE');
                 setInstallments('1');
+                setAccountId('');
                 onClose();
               }
             }}

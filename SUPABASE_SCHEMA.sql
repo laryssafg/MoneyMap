@@ -1,7 +1,7 @@
 -- SUPABASE SCHEMA FOR FINANCIAL DASHBOARD
 
 -- Accounts Table
-CREATE TABLE accounts (
+CREATE TABLE IF NOT EXISTS accounts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   bank TEXT NOT NULL,
@@ -12,7 +12,7 @@ CREATE TABLE accounts (
 );
 
 -- Cards Table
-CREATE TABLE cards (
+CREATE TABLE IF NOT EXISTS cards (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   bank TEXT NOT NULL,
@@ -26,7 +26,7 @@ CREATE TABLE cards (
 );
 
 -- Card Invoices Table
-CREATE TABLE card_invoices (
+CREATE TABLE IF NOT EXISTS card_invoices (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   card_id UUID REFERENCES cards(id) ON DELETE CASCADE,
   reference_month INTEGER NOT NULL,
@@ -42,7 +42,7 @@ CREATE TABLE card_invoices (
 );
 
 -- Card Expenses Table
-CREATE TABLE card_expenses (
+CREATE TABLE IF NOT EXISTS card_expenses (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   card_id UUID REFERENCES cards(id) ON DELETE CASCADE,
   invoice_id UUID REFERENCES card_invoices(id) ON DELETE CASCADE,
@@ -62,7 +62,7 @@ CREATE TABLE card_expenses (
 );
 
 -- Debts Table
-CREATE TABLE debts (
+CREATE TABLE IF NOT EXISTS debts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   total_value DECIMAL(15, 2) NOT NULL,
@@ -79,7 +79,7 @@ CREATE TABLE debts (
 );
 
 -- Investments Table
-CREATE TABLE investments (
+CREATE TABLE IF NOT EXISTS investments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   institution TEXT NOT NULL,
@@ -89,7 +89,7 @@ CREATE TABLE investments (
 );
 
 -- Goals Table
-CREATE TABLE goals (
+CREATE TABLE IF NOT EXISTS goals (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   target_value DECIMAL(15, 2) NOT NULL,
@@ -99,7 +99,7 @@ CREATE TABLE goals (
 );
 
 -- Transactions Table
-CREATE TABLE transactions (
+CREATE TABLE IF NOT EXISTS transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   description TEXT NOT NULL,
   amount DECIMAL(15, 2) NOT NULL,
@@ -107,11 +107,12 @@ CREATE TABLE transactions (
   category TEXT,
   type TEXT CHECK (type IN ('PF', 'PJ')),
   flow_type TEXT CHECK (flow_type IN ('INCOME', 'EXPENSE')),
+  account_id UUID REFERENCES accounts(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Profile Table
-CREATE TABLE profile (
+CREATE TABLE IF NOT EXISTS profile (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   monthly_income DECIMAL(15, 2) DEFAULT 0,
   updated_at TIMESTAMPTZ DEFAULT NOW()
