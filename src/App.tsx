@@ -393,8 +393,8 @@ export default function App() {
       let newCardExpenses = [...prev.cardExpenses];
       let newAccounts = [...prev.accounts];
       
-      // Update account balance if account is selected
-      if (transaction.accountId) {
+      // Update account balance if account is selected and it's NOT a credit card purchase
+      if (transaction.accountId && transaction.category !== 'CREDIT_CARD') {
         newAccounts = prev.accounts.map(acc => {
           if (acc.id === transaction.accountId) {
             const amount = Math.abs(transaction.amount);
@@ -491,7 +491,7 @@ export default function App() {
       }
 
       // Update account balance in Supabase
-      if (transaction.accountId) {
+      if (transaction.accountId && transaction.category !== 'CREDIT_CARD') {
         const account = data.accounts.find(a => a.id === transaction.accountId);
         if (account) {
           const amount = Math.abs(transaction.amount);
@@ -820,22 +820,75 @@ export default function App() {
               setData(prev => {
                 const transaction = prev.transactions.find(t => t.id === id);
                 let newAccounts = [...prev.accounts];
-                if (transaction && transaction.accountId) {
-                  newAccounts = prev.accounts.map(acc => {
-                    if (acc.id === transaction.accountId) {
-                      const amount = Math.abs(transaction.amount);
-                      // Revert: if it was INCOME, subtract. If it was EXPENSE, add.
-                      return { 
-                        ...acc, 
-                        balance: transaction.flowType === 'INCOME' ? acc.balance - amount : acc.balance + amount 
-                      };
+                let newCards = [...prev.cards];
+                let newInvoices = [...prev.invoices];
+                let newCardExpenses = [...prev.cardExpenses];
+
+                if (transaction) {
+                  const amount = Math.abs(transaction.amount);
+
+                  // Revert account balance if account is selected and it's NOT a credit card purchase
+                  if (transaction.accountId && transaction.category !== 'CREDIT_CARD') {
+                    newAccounts = prev.accounts.map(acc => {
+                      if (acc.id === transaction.accountId) {
+                        // Revert: if it was INCOME, subtract. If it was EXPENSE, add.
+                        return { 
+                          ...acc, 
+                          balance: transaction.flowType === 'INCOME' ? acc.balance - amount : acc.balance + amount 
+                        };
+                      }
+                      return acc;
+                    });
+                  }
+
+                  // Revert credit card balance if it's a card transaction
+                  if (transaction.category === 'CREDIT_CARD') {
+                    const card = prev.cards.find(c => c.type === transaction.type);
+                    if (card) {
+                      newCards = prev.cards.map(c => {
+                        if (c.id === card.id) {
+                          return { 
+                            ...c, 
+                            used: transaction.flowType === 'EXPENSE' ? Math.max(0, c.used - amount) : c.used + amount 
+                          };
+                        }
+                        return c;
+                      });
+
+                      // Revert invoice total amount
+                      const tDate = new Date(transaction.date + 'T12:00:00');
+                      const refMonth = tDate.getMonth() + 1;
+                      const refYear = tDate.getFullYear();
+
+                      const invoice = prev.invoices.find(inv => 
+                        inv.cardId === card.id && 
+                        inv.referenceMonth === refMonth && 
+                        inv.referenceYear === refYear
+                      );
+
+                      if (invoice) {
+                        newInvoices = prev.invoices.map(inv => inv.id === invoice.id ? {
+                          ...inv,
+                          totalAmount: Math.max(0, inv.totalAmount - amount)
+                        } : inv);
+
+                        // Also remove the card expense
+                        newCardExpenses = prev.cardExpenses.filter(exp => 
+                          !(exp.invoiceId === invoice.id && 
+                            exp.description === transaction.description && 
+                            exp.amount === amount)
+                        );
+                      }
                     }
-                    return acc;
-                  });
+                  }
                 }
+
                 return {
                   ...prev,
                   accounts: newAccounts,
+                  cards: newCards,
+                  invoices: newInvoices,
+                  cardExpenses: newCardExpenses,
                   transactions: prev.transactions.filter(t => t.id !== id)
                 };
               });
@@ -845,13 +898,50 @@ export default function App() {
                 try {
                   const transaction = data.transactions.find(t => t.id === id);
                   
-                  // Revert account balance in Supabase
-                  if (transaction && transaction.accountId) {
-                    const account = data.accounts.find(a => a.id === transaction.accountId);
-                    if (account) {
-                      const amount = Math.abs(transaction.amount);
-                      const newBalance = transaction.flowType === 'INCOME' ? account.balance - amount : account.balance + amount;
-                      await supabase.from('accounts').update({ balance: newBalance }).eq('id', account.id);
+                  if (transaction) {
+                    const amount = Math.abs(transaction.amount);
+
+                    // Revert account balance in Supabase if it's NOT a credit card purchase
+                    if (transaction.accountId && transaction.category !== 'CREDIT_CARD') {
+                      const account = data.accounts.find(a => a.id === transaction.accountId);
+                      if (account) {
+                        const newBalance = transaction.flowType === 'INCOME' ? account.balance - amount : account.balance + amount;
+                        await supabase.from('accounts').update({ balance: newBalance }).eq('id', account.id);
+                      }
+                    }
+
+                    // Revert credit card balance in Supabase
+                    if (transaction.category === 'CREDIT_CARD') {
+                      const card = data.cards.find(c => c.type === transaction.type);
+                      if (card) {
+                        const newUsed = transaction.flowType === 'EXPENSE' ? Math.max(0, card.used - amount) : card.used + amount;
+                        await supabase.from('cards').update({ used: newUsed }).eq('id', card.id);
+
+                        // Revert invoice total amount in Supabase
+                        const tDate = new Date(transaction.date + 'T12:00:00');
+                        const refMonth = tDate.getMonth() + 1;
+                        const refYear = tDate.getFullYear();
+
+                        const invoice = data.invoices.find(inv => 
+                          inv.cardId === card.id && 
+                          inv.referenceMonth === refMonth && 
+                          inv.referenceYear === refYear
+                        );
+
+                        if (invoice) {
+                          const newInvoiceTotal = Math.max(0, invoice.totalAmount - amount);
+                          await supabase.from('card_invoices').update({ total_amount: newInvoiceTotal }).eq('id', invoice.id);
+
+                          // Also delete card expense from Supabase
+                          await supabase.from('card_expenses')
+                            .delete()
+                            .match({ 
+                              invoice_id: invoice.id, 
+                              description: transaction.description, 
+                              amount: amount 
+                            });
+                        }
+                      }
                     }
                   }
 
@@ -1129,17 +1219,19 @@ function Dashboard({ totals, data, theme }: { totals: any, data: any, theme: 'li
       });
     }
 
-    data.transactions.forEach((t: any) => {
-      const tDate = new Date(t.date + 'T12:00:00');
-      const m = tDate.getMonth();
-      const y = tDate.getFullYear();
-      
-      const monthData = last4Months.find(d => d.month === m && d.year === y);
-      if (monthData) {
-        if (t.type === 'PF') monthData.pf += t.amount;
-        else monthData.pj += t.amount;
-      }
-    });
+    data.transactions
+      .filter((t: any) => t.category !== 'CREDIT_CARD')
+      .forEach((t: any) => {
+        const tDate = new Date(t.date + 'T12:00:00');
+        const m = tDate.getMonth();
+        const y = tDate.getFullYear();
+        
+        const monthData = last4Months.find(d => d.month === m && d.year === y);
+        if (monthData) {
+          if (t.type === 'PF') monthData.pf += t.amount;
+          else monthData.pj += t.amount;
+        }
+      });
 
     return last4Months;
   }, [data.transactions]);
@@ -2463,11 +2555,17 @@ function TransactionModal({ isOpen, onClose, onSave, accounts }: { isOpen: boole
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-bold text-brand-text-muted uppercase mb-2">Conta</label>
+              <label className="block text-xs font-bold text-brand-text-muted uppercase mb-2">
+                Conta {category === 'CREDIT_CARD' && <span className="text-[10px] text-brand-accent lowercase font-normal">(não aplicável para cartão)</span>}
+              </label>
               <select 
                 value={accountId}
                 onChange={(e) => setAccountId(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm focus:outline-none focus:border-brand-accent transition-all appearance-none"
+                disabled={category === 'CREDIT_CARD'}
+                className={cn(
+                  "w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm focus:outline-none focus:border-brand-accent transition-all appearance-none",
+                  category === 'CREDIT_CARD' && "opacity-50 cursor-not-allowed"
+                )}
               >
                 <option value="" className="bg-brand-card">Selecionar Conta</option>
                 {filteredAccounts.map(acc => (
@@ -2479,7 +2577,10 @@ function TransactionModal({ isOpen, onClose, onSave, accounts }: { isOpen: boole
               <label className="block text-xs font-bold text-brand-text-muted uppercase mb-2">Categoria</label>
               <select 
                 value={category}
-                onChange={(e) => setCategory(e.target.value)}
+                onChange={(e) => {
+                  setCategory(e.target.value);
+                  if (e.target.value === 'CREDIT_CARD') setAccountId('');
+                }}
                 className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm focus:outline-none focus:border-brand-accent transition-all appearance-none"
               >
                 <option value="PERSONAL" className="bg-brand-card">Pessoal</option>
