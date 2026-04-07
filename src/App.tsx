@@ -724,7 +724,7 @@ export default function App() {
           } else {
             // PURCHASE LOGIC: Existing logic
             const rp = prev.responsibleParties.find(r => r.id === transaction.responsiblePartyId);
-            const ownerName = rp ? rp.name : 'Eu';
+            const ownerName = rp ? rp.name : 'Laryssa Ferreira';
             const ownerType = transaction.responsiblePartyId === 'rp-user' ? 'user' : 'third_party';
 
             transactionsToSave.forEach(t => {
@@ -892,7 +892,7 @@ export default function App() {
           } else {
             // PURCHASE SYNC
             const rp = data.responsibleParties.find(r => r.id === transaction.responsiblePartyId);
-            const ownerName = rp ? rp.name : 'Eu';
+            const ownerName = rp ? rp.name : 'Laryssa Ferreira';
             const ownerType = transaction.responsiblePartyId === 'rp-user' ? 'user' : 'third_party';
 
             for (const t of transactionsToSave) {
@@ -2202,7 +2202,7 @@ function CardDetailsView({ cardId, data, onBack, onPayInvoice, onUpdateLimit, on
 
   const filteredExpenses = useMemo(() => {
     if (expenseFilter === 'all') return invoiceExpenses;
-    return invoiceExpenses.filter((exp: any) => (exp.ownerName || 'Eu') === expenseFilter);
+    return invoiceExpenses.filter((exp: any) => (exp.ownerName || 'Laryssa Ferreira') === expenseFilter);
   }, [invoiceExpenses, expenseFilter]);
 
   // Group expenses by date
@@ -2464,14 +2464,14 @@ function CardDetailsView({ cardId, data, onBack, onPayInvoice, onUpdateLimit, on
                     <p className="text-[10px] text-brand-text-muted uppercase font-bold tracking-widest mb-2">Divisão de Pagamento</p>
                     {Object.entries(
                       invoiceExpenses.reduce((acc: any, exp: any) => {
-                        const name = exp.ownerName || 'Eu';
+                        const name = exp.ownerName || 'Laryssa Ferreira';
                         acc[name] = (acc[name] || 0) + exp.amount;
                         return acc;
                       }, {})
                     ).map(([name, total]: [string, any]) => (
                       <div key={name} className="flex justify-between text-sm">
                         <span className="text-brand-text-muted">{name}</span>
-                        <span className={cn("font-bold", name === 'Eu' ? "text-blue-400" : "text-purple-400")}>
+                        <span className={cn("font-bold", name === 'Laryssa Ferreira' ? "text-blue-400" : "text-purple-400")}>
                           {formatCurrency(total)}
                         </span>
                       </div>
@@ -2586,8 +2586,8 @@ function CardDetailsView({ cardId, data, onBack, onPayInvoice, onUpdateLimit, on
                                 )}
                                 <>
                                   <span>•</span>
-                                  <span className={exp.ownerName === 'Eu' ? "text-blue-400" : "text-purple-400"}>
-                                    {exp.ownerName || 'Eu'}
+                                  <span className={exp.ownerName === 'Laryssa Ferreira' ? "text-blue-400" : "text-purple-400"}>
+                                    {exp.ownerName || 'Laryssa Ferreira'}
                                   </span>
                                 </>
                               </div>

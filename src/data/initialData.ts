@@ -67,7 +67,7 @@ export const INITIAL_DATA: FinancialState = {
     { id: "goal-growth", name: "Crescimento da Empresa", targetValue: 0, currentValue: 0 },
   ],
   responsibleParties: [
-    { id: "rp-user", name: "Eu" },
+    { id: "rp-user", name: "Laryssa Ferreira" },
   ],
   transactions: [
     { id: "t1", description: "Pagamento Lucimar", amount: -75, date: "2026-04-01", category: "PERSONAL", type: "PF", flowType: "EXPENSE" },
