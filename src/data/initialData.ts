@@ -66,6 +66,9 @@ export const INITIAL_DATA: FinancialState = {
     { id: "goal-abroad", name: "Mudança de País", targetValue: 0, currentValue: 0 },
     { id: "goal-growth", name: "Crescimento da Empresa", targetValue: 0, currentValue: 0 },
   ],
+  responsibleParties: [
+    { id: "rp-user", name: "Eu" },
+  ],
   transactions: [
     { id: "t1", description: "Pagamento Lucimar", amount: -75, date: "2026-04-01", category: "PERSONAL", type: "PF", flowType: "EXPENSE" },
     { id: "t2", description: "Escritório", amount: -63, date: "2026-04-02", category: "FIXED_COST", type: "PJ", flowType: "EXPENSE" },

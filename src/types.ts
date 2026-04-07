@@ -88,6 +88,11 @@ export interface Goal {
   deadline?: string;
 }
 
+export interface ResponsibleParty {
+  id: string;
+  name: string;
+}
+
 export interface Transaction {
   id: string;
   description: string;
@@ -106,6 +111,7 @@ export interface FinancialState {
   debts: Debt[];
   investments: Investment[];
   goals: Goal[];
+  responsibleParties: ResponsibleParty[];
   transactions: Transaction[];
   monthlyIncome: number;
 }

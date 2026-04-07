@@ -120,5 +120,12 @@ CREATE TABLE IF NOT EXISTS profile (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Responsible Parties Table
+CREATE TABLE IF NOT EXISTS responsible_parties (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Initial Data (Optional)
 -- INSERT INTO profile (monthly_income) VALUES (2000);

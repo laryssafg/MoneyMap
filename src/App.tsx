@@ -22,10 +22,12 @@ import {
   PieChart,
   Search,
   Plus,
+  Users,
   ArrowLeft,
   Download,
   CheckCircle2,
   PlusCircle,
+  Check,
   Edit2,
   CreditCard,
   ShoppingBag,
@@ -90,6 +92,7 @@ export default function App() {
   const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [isImpactModalOpen, setIsImpactModalOpen] = useState(false);
+  const [isResponsibleModalOpen, setIsResponsibleModalOpen] = useState(false);
   const [transactionModalInitialData, setTransactionModalInitialData] = useState<any>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
@@ -116,7 +119,8 @@ export default function App() {
         { data: transactions, error: transError },
         { data: profile, error: profError },
         { data: invoices, error: invoiceError },
-        { data: cardExpenses, error: expError }
+        { data: cardExpenses, error: expError },
+        { data: responsibleParties, error: rpError }
       ] = await Promise.all([
         supabase.from('accounts').select('*'),
         supabase.from('cards').select('*'),
@@ -126,7 +130,8 @@ export default function App() {
         supabase.from('transactions').select('*').order('date', { ascending: false }),
         supabase.from('profile').select('*').single(),
         supabase.from('card_invoices').select('*').order('due_date', { ascending: true }),
-        supabase.from('card_expenses').select('*').order('expense_date', { ascending: false })
+        supabase.from('card_expenses').select('*').order('expense_date', { ascending: false }),
+        supabase.from('responsible_parties').select('*').order('name', { ascending: true })
       ]);
 
       // Check if we have at least some data or if we should clear initial data
@@ -183,6 +188,7 @@ export default function App() {
         })) || [],
         investments: investments?.map(i => ({ ...i, value: Number(i.value) })) || [],
         goals: goals?.map(g => ({ ...g, targetValue: Number(g.target_value), currentValue: Number(g.current_value) })) || [],
+        responsibleParties: responsibleParties || prev.responsibleParties,
         transactions: transactions?.map(t => ({ 
           ...t, 
           amount: Number(t.amount),
@@ -638,15 +644,23 @@ export default function App() {
       let newCardExpenses = [...prev.cardExpenses];
       let newAccounts = [...prev.accounts];
       
-      // Update account balance if account is selected and it's NOT a credit card purchase
-      if (transaction.accountId && transaction.category !== 'CREDIT_CARD') {
+      // Update account balance
+      // For CREDIT_CARD + INCOME, it's a payment, so we SUBTRACT from account
+      if (transaction.accountId) {
         newAccounts = prev.accounts.map(acc => {
           if (acc.id === transaction.accountId) {
             const amount = Math.abs(transaction.amount);
-            return { 
-              ...acc, 
-              balance: transaction.flowType === 'INCOME' ? acc.balance + amount : acc.balance - amount 
-            };
+            let newBalance = acc.balance;
+            
+            if (transaction.category === 'CREDIT_CARD' && transaction.flowType === 'INCOME') {
+              // Payment: subtract from account
+              newBalance -= amount;
+            } else if (transaction.category !== 'CREDIT_CARD') {
+              // Normal transaction
+              newBalance = transaction.flowType === 'INCOME' ? acc.balance + amount : acc.balance - amount;
+            }
+            
+            return { ...acc, balance: newBalance };
           }
           return acc;
         });
@@ -656,6 +670,8 @@ export default function App() {
         const card = prev.cards.find(c => c.type === transaction.type);
         if (card) {
           const totalAmount = Math.abs(transaction.amount);
+          
+          // Update card used balance
           newCards = prev.cards.map(c => {
             if (c.id === card.id) {
               return { ...c, used: transaction.flowType === 'EXPENSE' ? c.used + totalAmount : Math.max(0, c.used - totalAmount) };
@@ -663,35 +679,85 @@ export default function App() {
             return c;
           });
           
-          transactionsToSave.forEach(t => {
-            const tDate = new Date(t.date + 'T12:00:00');
-            const refMonth = tDate.getMonth() + 1;
-            const refYear = tDate.getFullYear();
+          if (transaction.flowType === 'INCOME') {
+            // PAYMENT LOGIC: Target specific invoice
+            const paymentDate = new Date(transaction.date + 'T12:00:00');
+            const pDay = paymentDate.getDate();
+            const pMonth = paymentDate.getMonth();
+            const pYear = paymentDate.getFullYear();
+            
+            let targetMonth;
+            let targetYear;
+            
+            if (pDay <= 15) {
+              targetMonth = pMonth + 1;
+              targetYear = pYear;
+            } else {
+              const nextMonthDate = new Date(pYear, pMonth + 1, 1);
+              targetMonth = nextMonthDate.getMonth() + 1;
+              targetYear = nextMonthDate.getFullYear();
+            }
             
             const invoice = newInvoices.find(inv => 
               inv.cardId === card.id && 
-              inv.referenceMonth === refMonth && 
-              inv.referenceYear === refYear
+              inv.referenceMonth === targetMonth && 
+              inv.referenceYear === targetYear
             );
             
             if (invoice) {
               newInvoices = newInvoices.map(inv => inv.id === invoice.id ? {
                 ...inv,
-                totalAmount: inv.totalAmount + Math.abs(t.amount)
+                totalAmount: Math.max(0, inv.totalAmount - totalAmount)
               } : inv);
               
               newCardExpenses.push({
                 id: Math.random().toString(36).substr(2, 9),
                 cardId: card.id,
                 invoiceId: invoice.id,
-                description: t.description,
-                amount: Math.abs(t.amount),
-                expenseDate: t.date,
+                description: `PAGAMENTO: ${transaction.description}`,
+                amount: -totalAmount, // Negative to show as credit in the invoice
+                expenseDate: transaction.date,
                 category: 'OTHER',
                 ownerType: 'user'
               });
             }
-          });
+          } else {
+            // PURCHASE LOGIC: Existing logic
+            const rp = prev.responsibleParties.find(r => r.id === transaction.responsiblePartyId);
+            const ownerName = rp ? rp.name : 'Eu';
+            const ownerType = transaction.responsiblePartyId === 'rp-user' ? 'user' : 'third_party';
+
+            transactionsToSave.forEach(t => {
+              const tDate = new Date(t.date + 'T12:00:00');
+              const refMonth = tDate.getMonth() + 1;
+              const refYear = tDate.getFullYear();
+              
+              const invoice = newInvoices.find(inv => 
+                inv.cardId === card.id && 
+                inv.referenceMonth === refMonth && 
+                inv.referenceYear === refYear
+              );
+              
+              if (invoice) {
+                newInvoices = newInvoices.map(inv => inv.id === invoice.id ? {
+                  ...inv,
+                  totalAmount: inv.totalAmount + Math.abs(t.amount)
+                } : inv);
+                
+                newCardExpenses.push({
+                  id: Math.random().toString(36).substr(2, 9),
+                  cardId: card.id,
+                  invoiceId: invoice.id,
+                  description: t.description,
+                  amount: Math.abs(t.amount),
+                  expenseDate: t.date,
+                  category: 'OTHER',
+                  ownerType,
+                  ownerName
+                });
+              }
+            });
+          }
         }
       }
 
@@ -737,12 +803,21 @@ export default function App() {
       }
 
       // Update account balance in Supabase
-      if (transaction.accountId && transaction.category !== 'CREDIT_CARD') {
+      if (transaction.accountId) {
         const account = data.accounts.find(a => a.id === transaction.accountId);
         if (account) {
           const amount = Math.abs(transaction.amount);
-          const newBalance = transaction.flowType === 'INCOME' ? account.balance + amount : account.balance - amount;
-          await supabase.from('accounts').update({ balance: newBalance }).eq('id', account.id);
+          let newBalance = account.balance;
+          
+          if (transaction.category === 'CREDIT_CARD' && transaction.flowType === 'INCOME') {
+            newBalance -= amount;
+          } else if (transaction.category !== 'CREDIT_CARD') {
+            newBalance = transaction.flowType === 'INCOME' ? account.balance + amount : account.balance - amount;
+          }
+          
+          if (newBalance !== account.balance) {
+            await supabase.from('accounts').update({ balance: newBalance }).eq('id', account.id);
+          }
         }
       }
 
@@ -753,15 +828,29 @@ export default function App() {
           const newUsed = transaction.flowType === 'EXPENSE' ? card.used + totalAmount : Math.max(0, card.used - totalAmount);
           await supabase.from('cards').update({ used: newUsed }).eq('id', card.id);
           
-          for (const t of transactionsToSave) {
-            const tDate = new Date(t.date + 'T12:00:00');
-            const refMonth = tDate.getMonth() + 1;
-            const refYear = tDate.getFullYear();
+          if (transaction.flowType === 'INCOME') {
+            // PAYMENT SYNC
+            const paymentDate = new Date(transaction.date + 'T12:00:00');
+            const pDay = paymentDate.getDate();
+            const pMonth = paymentDate.getMonth();
+            const pYear = paymentDate.getFullYear();
+            
+            let targetMonth;
+            let targetYear;
+            
+            if (pDay <= 15) {
+              targetMonth = pMonth + 1;
+              targetYear = pYear;
+            } else {
+              const nextMonthDate = new Date(pYear, pMonth + 1, 1);
+              targetMonth = nextMonthDate.getMonth() + 1;
+              targetYear = nextMonthDate.getFullYear();
+            }
             
             const invoice = data.invoices.find(inv => 
               inv.cardId === card.id && 
-              inv.referenceMonth === refMonth && 
-              inv.referenceYear === refYear
+              inv.referenceMonth === targetMonth && 
+              inv.referenceYear === targetYear
             );
             
             let invoiceId = invoice?.id;
@@ -769,11 +858,11 @@ export default function App() {
             if (!invoiceId) {
               const { data: newInvoice, error: invError } = await supabase.from('card_invoices').insert([{
                 card_id: card.id,
-                reference_month: refMonth,
-                reference_year: refYear,
-                due_date: t.date,
-                total_amount: Math.abs(t.amount),
-                user_share: Math.abs(t.amount),
+                reference_month: targetMonth,
+                reference_year: targetYear,
+                due_date: transaction.date,
+                total_amount: 0,
+                user_share: 0,
                 third_party_share: 0,
                 status: 'open',
                 is_current_month: false
@@ -782,22 +871,77 @@ export default function App() {
               if (!invError && newInvoice) {
                 invoiceId = newInvoice.id;
               }
-            } else {
-              await supabase.from('card_invoices')
-                .update({ total_amount: (invoice?.totalAmount || 0) + Math.abs(t.amount) })
-                .eq('id', invoiceId);
             }
             
             if (invoiceId) {
+              const currentTotal = invoice?.totalAmount || 0;
+              await supabase.from('card_invoices')
+                .update({ total_amount: Math.max(0, currentTotal - totalAmount) })
+                .eq('id', invoiceId);
+                
               await supabase.from('card_expenses').insert([{
                 card_id: card.id,
                 invoice_id: invoiceId,
-                description: t.description,
-                amount: Math.abs(t.amount),
-                expense_date: t.date,
+                description: `PAGAMENTO: ${transaction.description}`,
+                amount: -totalAmount,
+                expense_date: transaction.date,
                 category: 'OTHER',
                 owner_type: 'user'
               }]);
+            }
+          } else {
+            // PURCHASE SYNC
+            const rp = data.responsibleParties.find(r => r.id === transaction.responsiblePartyId);
+            const ownerName = rp ? rp.name : 'Eu';
+            const ownerType = transaction.responsiblePartyId === 'rp-user' ? 'user' : 'third_party';
+
+            for (const t of transactionsToSave) {
+              const tDate = new Date(t.date + 'T12:00:00');
+              const refMonth = tDate.getMonth() + 1;
+              const refYear = tDate.getFullYear();
+              
+              const invoice = data.invoices.find(inv => 
+                inv.cardId === card.id && 
+                inv.referenceMonth === refMonth && 
+                inv.referenceYear === refYear
+              );
+              
+              let invoiceId = invoice?.id;
+              
+              if (!invoiceId) {
+                const { data: newInvoice, error: invError } = await supabase.from('card_invoices').insert([{
+                  card_id: card.id,
+                  reference_month: refMonth,
+                  reference_year: refYear,
+                  due_date: t.date,
+                  total_amount: Math.abs(t.amount),
+                  user_share: Math.abs(t.amount),
+                  third_party_share: 0,
+                  status: 'open',
+                  is_current_month: false
+                }]).select().single();
+                
+                if (!invError && newInvoice) {
+                  invoiceId = newInvoice.id;
+                }
+              } else {
+                await supabase.from('card_invoices')
+                  .update({ total_amount: (invoice?.totalAmount || 0) + Math.abs(t.amount) })
+                  .eq('id', invoiceId);
+              }
+              
+              if (invoiceId) {
+                await supabase.from('card_expenses').insert([{
+                  card_id: card.id,
+                  invoice_id: invoiceId,
+                  description: t.description,
+                  amount: Math.abs(t.amount),
+                  expense_date: t.date,
+                  category: 'OTHER',
+                  owner_type: ownerType,
+                  owner_name: ownerName
+                }]);
+              }
             }
           }
         }
@@ -986,6 +1130,74 @@ export default function App() {
     }
   };
 
+  const handleSaveResponsibleParty = async (name: string) => {
+    const newRp = { id: Math.random().toString(36).substr(2, 9), name };
+    
+    setData(prev => ({
+      ...prev,
+      responsibleParties: [...prev.responsibleParties, newRp]
+    }));
+
+    if (!isSupabaseConfigured) return;
+
+    try {
+      const { data: savedRp, error } = await supabase.from('responsible_parties').insert([{ name }]).select().single();
+      if (error) {
+        showNotification('Erro ao salvar responsável no Supabase', 'error');
+        throw error;
+      }
+      if (savedRp) {
+        setData(prev => ({
+          ...prev,
+          responsibleParties: prev.responsibleParties.map(r => r.id === newRp.id ? savedRp : r)
+        }));
+        showNotification('Responsável salvo com sucesso!');
+      }
+    } catch (error) {
+      console.error('Error saving responsible party:', error);
+    }
+  };
+
+  const handleDeleteResponsibleParty = async (id: string) => {
+    setData(prev => ({
+      ...prev,
+      responsibleParties: prev.responsibleParties.filter(r => r.id !== id)
+    }));
+
+    if (!isSupabaseConfigured) return;
+
+    try {
+      const { error } = await supabase.from('responsible_parties').delete().eq('id', id);
+      if (error) {
+        showNotification('Erro ao excluir responsável no Supabase', 'error');
+      } else {
+        showNotification('Responsável excluído com sucesso!');
+      }
+    } catch (error) {
+      console.error('Error deleting responsible party:', error);
+    }
+  };
+
+  const handleUpdateResponsibleParty = async (id: string, name: string) => {
+    setData(prev => ({
+      ...prev,
+      responsibleParties: prev.responsibleParties.map(r => r.id === id ? { ...r, name } : r)
+    }));
+
+    if (!isSupabaseConfigured) return;
+
+    try {
+      const { error } = await supabase.from('responsible_parties').update({ name }).eq('id', id);
+      if (error) {
+        showNotification('Erro ao atualizar responsável no Supabase', 'error');
+      } else {
+        showNotification('Responsável atualizado com sucesso!');
+      }
+    } catch (error) {
+      console.error('Error updating responsible party:', error);
+    }
+  };
+
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'map', label: 'Mapa Financeiro', icon: PieChart },
@@ -1057,6 +1269,7 @@ export default function App() {
             onBack={() => setCurrentView('cards')}
             onPayInvoice={handlePayInvoice}
             onUpdateLimit={handleUpdateCardLimit}
+            onManageResponsibles={() => setIsResponsibleModalOpen(true)}
             onNewPurchase={(card) => {
               setTransactionModalInitialData({
                 category: 'CREDIT_CARD',
@@ -1114,8 +1327,24 @@ export default function App() {
 
                       // Revert invoice total amount
                       const tDate = new Date(transaction.date + 'T12:00:00');
-                      const refMonth = tDate.getMonth() + 1;
-                      const refYear = tDate.getFullYear();
+                      let refMonth, refYear;
+
+                      if (transaction.flowType === 'INCOME') {
+                        const pDay = tDate.getDate();
+                        const pMonth = tDate.getMonth();
+                        const pYear = tDate.getFullYear();
+                        if (pDay <= 15) {
+                          refMonth = pMonth + 1;
+                          refYear = pYear;
+                        } else {
+                          const nextMonthDate = new Date(pYear, pMonth + 1, 1);
+                          refMonth = nextMonthDate.getMonth() + 1;
+                          refYear = nextMonthDate.getFullYear();
+                        }
+                      } else {
+                        refMonth = tDate.getMonth() + 1;
+                        refYear = tDate.getFullYear();
+                      }
 
                       const invoice = prev.invoices.find(inv => 
                         inv.cardId === card.id && 
@@ -1126,14 +1355,14 @@ export default function App() {
                       if (invoice) {
                         newInvoices = prev.invoices.map(inv => inv.id === invoice.id ? {
                           ...inv,
-                          totalAmount: Math.max(0, inv.totalAmount - amount)
+                          totalAmount: transaction.flowType === 'EXPENSE' ? Math.max(0, inv.totalAmount - amount) : inv.totalAmount + amount
                         } : inv);
 
                         // Also remove the card expense
                         newCardExpenses = prev.cardExpenses.filter(exp => 
                           !(exp.invoiceId === invoice.id && 
-                            exp.description === transaction.description && 
-                            exp.amount === amount)
+                            exp.description.includes(transaction.description) && 
+                            Math.abs(exp.amount) === amount)
                         );
                       }
                     }
@@ -1173,8 +1402,24 @@ export default function App() {
                       if (card) {
                         // Revert invoice total amount in Supabase
                         const tDate = new Date(transaction.date + 'T12:00:00');
-                        const refMonth = tDate.getMonth() + 1;
-                        const refYear = tDate.getFullYear();
+                        let refMonth, refYear;
+
+                        if (transaction.flowType === 'INCOME') {
+                          const pDay = tDate.getDate();
+                          const pMonth = tDate.getMonth();
+                          const pYear = tDate.getFullYear();
+                          if (pDay <= 15) {
+                            refMonth = pMonth + 1;
+                            refYear = pYear;
+                          } else {
+                            const nextMonthDate = new Date(pYear, pMonth + 1, 1);
+                            refMonth = nextMonthDate.getMonth() + 1;
+                            refYear = nextMonthDate.getFullYear();
+                          }
+                        } else {
+                          refMonth = tDate.getMonth() + 1;
+                          refYear = tDate.getFullYear();
+                        }
 
                         const invoice = data.invoices.find(inv => 
                           inv.cardId === card.id && 
@@ -1183,17 +1428,16 @@ export default function App() {
                         );
 
                         if (invoice) {
-                          const newInvoiceTotal = Math.max(0, invoice.totalAmount - amount);
+                          const newInvoiceTotal = transaction.flowType === 'EXPENSE' ? Math.max(0, invoice.totalAmount - amount) : invoice.totalAmount + amount;
                           await supabase.from('card_invoices').update({ total_amount: newInvoiceTotal }).eq('id', invoice.id);
 
                           // Also delete card expense from Supabase
-                          // Use a more flexible match or just delete by description, amount and date
                           await supabase.from('card_expenses')
                             .delete()
                             .match({ 
                               card_id: card.id,
                               invoice_id: invoice.id, 
-                              amount: amount 
+                              amount: transaction.flowType === 'EXPENSE' ? amount : -amount 
                             })
                             .ilike('description', `%${transaction.description}%`);
                         }
@@ -1422,6 +1666,7 @@ export default function App() {
         onSave={handleSaveTransaction}
         accounts={data.accounts}
         initialData={transactionModalInitialData}
+        responsibleParties={data.responsibleParties}
       />
 
       <AccountModal 
@@ -1440,6 +1685,15 @@ export default function App() {
         isOpen={isGoalModalOpen} 
         onClose={() => setIsGoalModalOpen(false)} 
         onSave={handleSaveGoal} 
+      />
+
+      <ResponsiblePartyModal 
+        isOpen={isResponsibleModalOpen}
+        onClose={() => setIsResponsibleModalOpen(false)}
+        onSave={handleSaveResponsibleParty}
+        onUpdate={handleUpdateResponsibleParty}
+        onDelete={handleDeleteResponsibleParty}
+        responsibleParties={data.responsibleParties}
       />
 
       <ImpactSimulationModal 
@@ -1927,7 +2181,7 @@ function CardsView({ data, onViewTransactions, onCardClick }: { data: any, onVie
   );
 }
 
-function CardDetailsView({ cardId, data, onBack, onPayInvoice, onUpdateLimit, onNewPurchase }: { cardId: string, data: any, onBack: () => void, onPayInvoice: (id: string) => void, onUpdateLimit: (id: string, newLimit: number) => void, onNewPurchase: (card: any) => void }) {
+function CardDetailsView({ cardId, data, onBack, onPayInvoice, onUpdateLimit, onNewPurchase, onManageResponsibles }: { cardId: string, data: any, onBack: () => void, onPayInvoice: (id: string) => void, onUpdateLimit: (id: string, newLimit: number) => void, onNewPurchase: (card: any) => void, onManageResponsibles: () => void }) {
   const card = data.cards.find((c: any) => c.id === cardId);
   const cardInvoices = data.invoices.filter((inv: any) => inv.cardId === cardId);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(
@@ -1944,11 +2198,11 @@ function CardDetailsView({ cardId, data, onBack, onPayInvoice, onUpdateLimit, on
   const selectedInvoice = cardInvoices.find((inv: any) => inv.id === selectedInvoiceId);
   const invoiceExpenses = data.cardExpenses.filter((exp: any) => exp.invoiceId === selectedInvoiceId);
 
-  const [expenseFilter, setExpenseFilter] = useState<'all' | 'user' | 'third_party'>('all');
+  const [expenseFilter, setExpenseFilter] = useState<string>('all');
 
   const filteredExpenses = useMemo(() => {
     if (expenseFilter === 'all') return invoiceExpenses;
-    return invoiceExpenses.filter((exp: any) => exp.ownerType === expenseFilter);
+    return invoiceExpenses.filter((exp: any) => (exp.ownerName || 'Eu') === expenseFilter);
   }, [invoiceExpenses, expenseFilter]);
 
   // Group expenses by date
@@ -2205,18 +2459,24 @@ function CardDetailsView({ cardId, data, onBack, onPayInvoice, onUpdateLimit, on
                     </span>
                   </div>
                   
-                  {card.id === 'card-pf-inter' && (
-                    <>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-brand-text-muted">Minha Parte</span>
-                        <span className="font-bold text-blue-400">{formatCurrency(selectedInvoice.userShare)}</span>
+                  {/* Breakdown per responsible party */}
+                  <div className="space-y-2 pt-2">
+                    <p className="text-[10px] text-brand-text-muted uppercase font-bold tracking-widest mb-2">Divisão de Pagamento</p>
+                    {Object.entries(
+                      invoiceExpenses.reduce((acc: any, exp: any) => {
+                        const name = exp.ownerName || 'Eu';
+                        acc[name] = (acc[name] || 0) + exp.amount;
+                        return acc;
+                      }, {})
+                    ).map(([name, total]: [string, any]) => (
+                      <div key={name} className="flex justify-between text-sm">
+                        <span className="text-brand-text-muted">{name}</span>
+                        <span className={cn("font-bold", name === 'Eu' ? "text-blue-400" : "text-purple-400")}>
+                          {formatCurrency(total)}
+                        </span>
                       </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-brand-text-muted">Parte da {selectedInvoice.thirdPartyName}</span>
-                        <span className="font-bold text-purple-400">{formatCurrency(selectedInvoice.thirdPartyShare)}</span>
-                      </div>
-                    </>
-                  )}
+                    ))}
+                  </div>
                 </div>
 
                 <div className={cn("pt-6 grid gap-3", selectedInvoice.status !== 'paid' ? "grid-cols-2" : "grid-cols-1")}>
@@ -2243,6 +2503,13 @@ function CardDetailsView({ cardId, data, onBack, onPayInvoice, onUpdateLimit, on
             <div className="bg-brand-card rounded-3xl p-6 border border-white/5 space-y-4">
               <h5 className="font-bold text-sm">Ações da Fatura</h5>
               <div className="grid grid-cols-1 gap-2">
+                <button 
+                  onClick={onManageResponsibles}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors text-sm text-brand-text-muted hover:text-white group"
+                >
+                  <Users size={18} className="group-hover:text-brand-accent" />
+                  Gerenciar Responsáveis
+                </button>
                 <button className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors text-sm text-brand-text-muted hover:text-white group">
                   <FileText size={18} className="group-hover:text-brand-accent" />
                   Exportar PDF
@@ -2262,37 +2529,29 @@ function CardDetailsView({ cardId, data, onBack, onPayInvoice, onUpdateLimit, on
           <div className="lg:col-span-2 space-y-6">
             <div className="flex items-center justify-between">
               <h3 className="font-bold">Extrato da Fatura</h3>
-              {card.id === 'card-pf-inter' && (
-                <div className="flex bg-white/5 p-1 rounded-xl">
+              <div className="flex bg-white/5 p-1 rounded-xl overflow-x-auto scrollbar-hide max-w-[200px] md:max-w-none">
+                <button 
+                  onClick={() => setExpenseFilter('all')}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap",
+                    expenseFilter === 'all' ? "bg-brand-accent text-white" : "text-brand-text-muted hover:text-white"
+                  )}
+                >
+                  Todos
+                </button>
+                {data.responsibleParties.map((rp: any) => (
                   <button 
-                    onClick={() => setExpenseFilter('all')}
+                    key={rp.id}
+                    onClick={() => setExpenseFilter(rp.name)}
                     className={cn(
-                      "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
-                      expenseFilter === 'all' ? "bg-brand-accent text-white" : "text-brand-text-muted hover:text-white"
+                      "px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap",
+                      expenseFilter === rp.name ? "bg-brand-accent text-white" : "text-brand-text-muted hover:text-white"
                     )}
                   >
-                    Todos
+                    {rp.name}
                   </button>
-                  <button 
-                    onClick={() => setExpenseFilter('user')}
-                    className={cn(
-                      "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
-                      expenseFilter === 'user' ? "bg-brand-accent text-white" : "text-brand-text-muted hover:text-white"
-                    )}
-                  >
-                    Eu
-                  </button>
-                  <button 
-                    onClick={() => setExpenseFilter('third_party')}
-                    className={cn(
-                      "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
-                      expenseFilter === 'third_party' ? "bg-brand-accent text-white" : "text-brand-text-muted hover:text-white"
-                    )}
-                  >
-                    {selectedInvoice.thirdPartyName}
-                  </button>
-                </div>
-              )}
+                ))}
+              </div>
             </div>
 
             <div className="space-y-8">
@@ -2325,14 +2584,12 @@ function CardDetailsView({ cardId, data, onBack, onPayInvoice, onUpdateLimit, on
                                     <span>Parc {exp.currentInstallment}/{exp.installments}</span>
                                   </>
                                 )}
-                                {card.id === 'card-pf-inter' && (
-                                  <>
-                                    <span>•</span>
-                                    <span className={exp.ownerType === 'user' ? "text-blue-400" : "text-purple-400"}>
-                                      {exp.ownerType === 'user' ? 'Eu' : exp.ownerName}
-                                    </span>
-                                  </>
-                                )}
+                                <>
+                                  <span>•</span>
+                                  <span className={exp.ownerName === 'Eu' ? "text-blue-400" : "text-purple-400"}>
+                                    {exp.ownerName || 'Eu'}
+                                  </span>
+                                </>
                               </div>
                             </div>
                           </div>
@@ -2806,7 +3063,117 @@ function TransferModal({ isOpen, onClose, accounts, onTransfer }: { isOpen: bool
   );
 }
 
-function TransactionModal({ isOpen, onClose, onSave, accounts, initialData }: { isOpen: boolean, onClose: () => void, onSave: (t: any) => void, accounts: any[], initialData?: any }) {
+function ResponsiblePartyModal({ isOpen, onClose, onSave, onUpdate, onDelete, responsibleParties }: { isOpen: boolean, onClose: () => void, onSave: (name: string) => void, onUpdate: (id: string, name: string) => void, onDelete: (id: string) => void, responsibleParties: any[] }) {
+  const [name, setName] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="bg-brand-card w-full max-w-md rounded-3xl border border-white/10 p-8 shadow-2xl"
+      >
+        <div className="flex justify-between items-center mb-8">
+          <h2 className="text-2xl font-bold">Gerenciar Responsáveis</h2>
+          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-full transition-colors">
+            <X size={24} />
+          </button>
+        </div>
+
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-brand-text-muted uppercase tracking-wider">Novo Responsável</label>
+            <div className="flex gap-2">
+              <input 
+                type="text" 
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ex: Esposa, Filho, Amigo"
+                className="flex-1 px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-sm focus:outline-none focus:border-brand-accent transition-all"
+              />
+              <button 
+                onClick={() => {
+                  if (name) {
+                    onSave(name);
+                    setName('');
+                  }
+                }}
+                className="px-6 bg-brand-accent rounded-2xl font-bold text-sm hover:bg-brand-accent/90 transition-all"
+              >
+                <Plus size={20} />
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-3 max-h-60 overflow-y-auto pr-2 scrollbar-hide">
+            <p className="text-xs font-bold text-brand-text-muted uppercase tracking-wider mb-2">Lista de Responsáveis</p>
+            {responsibleParties.map(rp => (
+              <div key={rp.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5 group">
+                {editingId === rp.id ? (
+                  <div className="flex-1 flex gap-2">
+                    <input 
+                      type="text" 
+                      value={editingName}
+                      onChange={(e) => setEditingName(e.target.value)}
+                      className="flex-1 px-3 py-1 bg-white/10 border border-white/10 rounded-lg text-sm focus:outline-none"
+                      autoFocus
+                    />
+                    <button 
+                      onClick={() => {
+                        onUpdate(rp.id, editingName);
+                        setEditingId(null);
+                      }}
+                      className="p-1 text-green-400 hover:bg-green-500/10 rounded"
+                    >
+                      <Check size={16} />
+                    </button>
+                    <button 
+                      onClick={() => setEditingId(null)}
+                      className="p-1 text-red-400 hover:bg-red-500/10 rounded"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <span className="font-medium">{rp.name}</span>
+                    <div className="flex gap-1">
+                      {rp.id !== 'rp-user' && (
+                        <>
+                          <button 
+                            onClick={() => {
+                              setEditingId(rp.id);
+                              setEditingName(rp.name);
+                            }}
+                            className="p-2 text-brand-text-muted opacity-0 group-hover:opacity-100 transition-all hover:bg-white/5 rounded-lg"
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                          <button 
+                            onClick={() => onDelete(rp.id)}
+                            className="p-2 text-red-400 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500/10 rounded-lg"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function TransactionModal({ isOpen, onClose, onSave, accounts, initialData, responsibleParties }: { isOpen: boolean, onClose: () => void, onSave: (t: any) => void, accounts: any[], initialData?: any, responsibleParties: any[] }) {
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
@@ -2815,6 +3182,7 @@ function TransactionModal({ isOpen, onClose, onSave, accounts, initialData }: { 
   const [flowType, setFlowType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE');
   const [installments, setInstallments] = useState('1');
   const [accountId, setAccountId] = useState('');
+  const [responsiblePartyId, setResponsiblePartyId] = useState('rp-user');
 
   useEffect(() => {
     if (isOpen) {
@@ -2826,6 +3194,7 @@ function TransactionModal({ isOpen, onClose, onSave, accounts, initialData }: { 
       setFlowType(initialData?.flowType || 'EXPENSE');
       setInstallments(initialData?.installments || '1');
       setAccountId(initialData?.accountId || '');
+      setResponsiblePartyId(initialData?.responsiblePartyId || 'rp-user');
     }
   }, [isOpen, initialData]);
 
@@ -2901,15 +3270,15 @@ function TransactionModal({ isOpen, onClose, onSave, accounts, initialData }: { 
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-brand-text-muted uppercase mb-2">
-                Conta {category === 'CREDIT_CARD' && <span className="text-[10px] text-brand-accent lowercase font-normal">(não aplicável para cartão)</span>}
+                Conta {category === 'CREDIT_CARD' && flowType === 'EXPENSE' && <span className="text-[10px] text-brand-accent lowercase font-normal">(não aplicável para compra)</span>}
               </label>
               <select 
                 value={accountId}
                 onChange={(e) => setAccountId(e.target.value)}
-                disabled={category === 'CREDIT_CARD'}
+                disabled={category === 'CREDIT_CARD' && flowType === 'EXPENSE'}
                 className={cn(
                   "w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm focus:outline-none focus:border-brand-accent transition-all appearance-none",
-                  category === 'CREDIT_CARD' && "opacity-50 cursor-not-allowed"
+                  category === 'CREDIT_CARD' && flowType === 'EXPENSE' && "opacity-50 cursor-not-allowed"
                 )}
               >
                 <option value="" className="bg-brand-card">Selecionar Conta</option>
@@ -2972,22 +3341,40 @@ function TransactionModal({ isOpen, onClose, onSave, accounts, initialData }: { 
             </div>
           </div>
 
-          {category === 'CREDIT_CARD' && (
-            <motion.div 
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-2"
-            >
-              <label className="block text-xs font-bold text-brand-text-muted uppercase mb-2">Parcelas</label>
-              <input 
-                type="number" 
-                min="1"
-                max="48"
-                value={installments}
-                onChange={(e) => setInstallments(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm focus:outline-none focus:border-brand-accent transition-all"
-              />
-            </motion.div>
+          {category === 'CREDIT_CARD' && flowType === 'EXPENSE' && (
+            <div className="grid grid-cols-2 gap-4">
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-2"
+              >
+                <label className="block text-xs font-bold text-brand-text-muted uppercase mb-2">Parcelas</label>
+                <input 
+                  type="number" 
+                  min="1"
+                  max="48"
+                  value={installments}
+                  onChange={(e) => setInstallments(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm focus:outline-none focus:border-brand-accent transition-all"
+                />
+              </motion.div>
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-2"
+              >
+                <label className="block text-xs font-bold text-brand-text-muted uppercase mb-2">Responsável</label>
+                <select 
+                  value={responsiblePartyId}
+                  onChange={(e) => setResponsiblePartyId(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm focus:outline-none focus:border-brand-accent transition-all appearance-none"
+                >
+                  {responsibleParties.map(rp => (
+                    <option key={rp.id} value={rp.id} className="bg-brand-card">{rp.name}</option>
+                  ))}
+                </select>
+              </motion.div>
+            </div>
           )}
 
           <button 
@@ -3002,7 +3389,8 @@ function TransactionModal({ isOpen, onClose, onSave, accounts, initialData }: { 
                   type,
                   flowType,
                   installments: parseInt(installments) || 1,
-                  accountId: accountId || null
+                  accountId: accountId || null,
+                  responsiblePartyId
                 });
                 setDescription('');
                 setAmount('');
