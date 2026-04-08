@@ -962,26 +962,41 @@ export default function App() {
   const handleTransfer = async (fromId: string, toId: string, amount: number) => {
     // Optimistic update
     setData(prev => {
+      const fromAcc = prev.accounts.find(a => a.id === fromId);
+      const toAcc = prev.accounts.find(a => a.id === toId);
+      
       const newAccounts = prev.accounts.map(acc => {
         if (acc.id === fromId) return { ...acc, balance: acc.balance - amount };
         if (acc.id === toId) return { ...acc, balance: acc.balance + amount };
         return acc;
       });
 
-      const newTransaction = {
+      const expenseTransaction = {
         id: Math.random().toString(36).substr(2, 9),
-        description: `Transferência entre contas`,
+        description: `Transferência: ${fromAcc?.name} -> ${toAcc?.name}`,
         amount: -amount,
         date: new Date().toISOString().split('T')[0],
         category: 'TRANSFER',
-        type: prev.accounts.find(a => a.id === fromId)?.type || 'PF',
-        flowType: 'EXPENSE' as const
+        type: fromAcc?.type || 'PF',
+        flowType: 'EXPENSE' as const,
+        accountId: fromId
+      };
+
+      const incomeTransaction = {
+        id: Math.random().toString(36).substr(2, 9),
+        description: `Transferência: ${fromAcc?.name} -> ${toAcc?.name}`,
+        amount: amount,
+        date: new Date().toISOString().split('T')[0],
+        category: 'TRANSFER',
+        type: toAcc?.type || 'PF',
+        flowType: 'INCOME' as const,
+        accountId: toId
       };
 
       return {
         ...prev,
         accounts: newAccounts,
-        transactions: [newTransaction, ...prev.transactions]
+        transactions: [expenseTransaction, incomeTransaction, ...prev.transactions]
       };
     });
 
@@ -994,14 +1009,26 @@ export default function App() {
         await Promise.all([
           supabase.from('accounts').update({ balance: fromAcc.balance - amount }).eq('id', fromId),
           supabase.from('accounts').update({ balance: toAcc.balance + amount }).eq('id', toId),
-          supabase.from('transactions').insert([{
-            description: `Transferência entre contas`,
-            amount: -amount,
-            date: new Date().toISOString().split('T')[0],
-            category: 'TRANSFER',
-            type: fromAcc.type,
-            flow_type: 'EXPENSE'
-          }])
+          supabase.from('transactions').insert([
+            {
+              description: `Transferência: ${fromAcc.name} -> ${toAcc.name}`,
+              amount: -amount,
+              date: new Date().toISOString().split('T')[0],
+              category: 'TRANSFER',
+              type: fromAcc.type,
+              flow_type: 'EXPENSE',
+              account_id: fromId
+            },
+            {
+              description: `Transferência: ${fromAcc.name} -> ${toAcc.name}`,
+              amount: amount,
+              date: new Date().toISOString().split('T')[0],
+              category: 'TRANSFER',
+              type: toAcc.type,
+              flow_type: 'INCOME',
+              account_id: toId
+            }
+          ])
         ]);
       }
     } catch (error) {
