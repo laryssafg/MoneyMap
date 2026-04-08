@@ -422,11 +422,12 @@ export default function App() {
           }
 
           if (invoiceId) {
+            const isPayment = t.flowType === 'INCOME';
             await supabase.from('card_expenses').insert([{
               card_id: card.id,
               invoice_id: invoiceId,
-              description: t.description,
-              amount: Math.abs(t.amount),
+              description: isPayment ? `PAGAMENTO: ${t.description}` : t.description,
+              amount: isPayment ? -Math.abs(t.amount) : Math.abs(t.amount),
               expense_date: t.date,
               category: 'OTHER',
               owner_type: 'user'
@@ -707,7 +708,8 @@ export default function App() {
             if (invoice) {
               newInvoices = newInvoices.map(inv => inv.id === invoice.id ? {
                 ...inv,
-                totalAmount: Math.max(0, inv.totalAmount - totalAmount)
+                totalAmount: Math.max(0, inv.totalAmount - totalAmount),
+                userShare: Math.max(0, (inv.userShare || 0) - totalAmount)
               } : inv);
               
               newCardExpenses.push({
@@ -718,7 +720,8 @@ export default function App() {
                 amount: -totalAmount, // Negative to show as credit in the invoice
                 expenseDate: transaction.date,
                 category: 'OTHER',
-                ownerType: 'user'
+                ownerType: 'user',
+                ownerName: 'Laryssa Ferreira'
               });
             }
           } else {
@@ -875,8 +878,12 @@ export default function App() {
             
             if (invoiceId) {
               const currentTotal = invoice?.totalAmount || 0;
+              const currentUserShare = invoice?.userShare || 0;
               await supabase.from('card_invoices')
-                .update({ total_amount: Math.max(0, currentTotal - totalAmount) })
+                .update({ 
+                  total_amount: Math.max(0, currentTotal - totalAmount),
+                  user_share: Math.max(0, currentUserShare - totalAmount)
+                })
                 .eq('id', invoiceId);
                 
               await supabase.from('card_expenses').insert([{
@@ -886,7 +893,8 @@ export default function App() {
                 amount: -totalAmount,
                 expense_date: transaction.date,
                 category: 'OTHER',
-                owner_type: 'user'
+                owner_type: 'user',
+                owner_name: 'Laryssa Ferreira'
               }]);
             }
           } else {
@@ -1355,7 +1363,8 @@ export default function App() {
                       if (invoice) {
                         newInvoices = prev.invoices.map(inv => inv.id === invoice.id ? {
                           ...inv,
-                          totalAmount: transaction.flowType === 'EXPENSE' ? Math.max(0, inv.totalAmount - amount) : inv.totalAmount + amount
+                          totalAmount: transaction.flowType === 'EXPENSE' ? Math.max(0, inv.totalAmount - amount) : inv.totalAmount + amount,
+                          userShare: transaction.flowType === 'INCOME' ? (inv.userShare || 0) + amount : (transaction.responsiblePartyId === 'rp-user' ? Math.max(0, (inv.userShare || 0) - amount) : inv.userShare)
                         } : inv);
 
                         // Also remove the card expense
@@ -1428,8 +1437,16 @@ export default function App() {
                         );
 
                         if (invoice) {
-                          const newInvoiceTotal = transaction.flowType === 'EXPENSE' ? Math.max(0, invoice.totalAmount - amount) : invoice.totalAmount + amount;
-                          await supabase.from('card_invoices').update({ total_amount: newInvoiceTotal }).eq('id', invoice.id);
+                          const isPayment = transaction.flowType === 'INCOME';
+                          const isUserPurchase = transaction.flowType === 'EXPENSE' && transaction.responsiblePartyId === 'rp-user';
+                          
+                          const newInvoiceTotal = isPayment ? invoice.totalAmount + amount : Math.max(0, invoice.totalAmount - amount);
+                          const newUserShare = isPayment ? (invoice.userShare || 0) + amount : (isUserPurchase ? Math.max(0, (invoice.userShare || 0) - amount) : invoice.userShare);
+                          
+                          await supabase.from('card_invoices').update({ 
+                            total_amount: newInvoiceTotal,
+                            user_share: newUserShare
+                          }).eq('id', invoice.id);
 
                           // Also delete card expense from Supabase
                           await supabase.from('card_expenses')
